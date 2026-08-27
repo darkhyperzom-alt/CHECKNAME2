@@ -1,0 +1,27 @@
+
+.env
+.env.local
+*.session
+*.session-journal
+
+# ===== ข้อมูลภายใน =====
+# รายชื่อพนักงานย้ายไปเก็บใน PostgreSQL แล้ว ไม่ต้องอยู่ใน repo
+shift_assignments.json
+
+# ===== ฐานข้อมูลเก่าสมัยใช้ SQLite =====
+status.db
+*.db
+
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# ===== เครื่องมือ / ระบบปฏิบัติการ =====
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>สถานะพนักงาน</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/tabler-icons.min.css">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Tahoma", "Segoe UI", sans-serif;
+    background: #100a1c;
+    margin: 0; padding: 24px;
+    color: #e6e0f0;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  @keyframes fadeSlide { from {opacity:0; transform:translateY(6px);} to {opacity:1; transform:translateY(0);} }
+  @keyframes pulseRed { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.35);} 50%{box-shadow:0 0 0 6px rgba(239,68,68,0);} }
+  @keyframes livePulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+  @keyframes shimmer { 0%{background-position:-200% 0;} 100%{background-position:200% 0;} }
+  @keyframes fall { from{transform:translateY(0) rotate(0);} to{transform:translateY(110vh) rotate(360deg);} }
+  @keyframes badgePulse { 0%,100%{box-shadow:0 0 0 0 rgba(248,113,113,0.5);} 50%{box-shadow:0 0 0 5px rgba(248,113,113,0.1);} }
+
+  .bg-emoji { position:fixed; top:-40px; opacity:0.35; pointer-events:none; animation:fall linear infinite; z-index:0; }
+  .content { position:relative; z-index:1; max-width:1120px; margin:0 auto; }
+
+  .header { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; flex-wrap:wrap; gap:12px; }
+  .title-wrap { display:flex; align-items:center; gap:10px; }
+  .title { font-size:19px; font-weight:500;
+    background:linear-gradient(90deg,#c4b5fd,#8b5cf6,#c4b5fd); background-size:200% auto;
+    -webkit-background-clip:text; background-clip:text; color:transparent; animation:shimmer 4s linear infinite; }
+  .live { display:inline-flex; align-items:center; gap:5px; background:#1a2e1f; color:#4ade80; font-size:11px; padding:3px 10px; border-radius:999px; }
+  .live.off { background:#2e1420; color:#f87171; }
+  .live .dot { width:6px; height:6px; border-radius:50%; background:currentColor; animation:livePulse 1.5s ease infinite; }
+  .header-right { display:flex; align-items:center; gap:10px; }
+  .shift-seg { display:flex; background:#1c1430; border-radius:999px; padding:3px; }
+  .shift-btn { font-size:12px; padding:5px 13px; border-radius:999px; color:#a094c0; cursor:pointer; border:none; background:transparent; font-family:inherit; transition:all 0.2s ease; }
+  .shift-btn.active { background:#8b5cf6; color:#fff; font-weight:500; }
+  .shift-btn:hover:not(.active) { color:#c4b5fd; }
+  .edit-link { font-size:12px; color:#a094c0; text-decoration:none; display:flex; align-items:center; gap:4px; padding:6px 12px; border:1px solid #2d2145; border-radius:999px; transition:all 0.2s ease; background:none; cursor:pointer; font-family:inherit; }
+  .edit-link:hover { border-color:#8b5cf6; color:#c4b5fd; }
+  #checkin-lock-btn.unlocked { border-color:#f87171; color:#f87171; background:#2e1420; }
+  #checkin-lock-btn.unlocked:hover { border-color:#f87171; color:#fca5a5; }
+  .updated { font-size:11px; color:#6b5f8a; }
+
+  /* ล็อกไม่ให้กดเช็คชื่อพลาด — ต้องกดปลดล็อกก่อนปุ่ม + ถึงจะกดติด (กันเผลอกดตอนแค่ดูจอ) */
+  body.checkin-locked .ci-btn { opacity:0.35; cursor:not-allowed; }
+
+  .summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:11px; margin-bottom:20px; }
+  .sum-card { background:linear-gradient(145deg,#1e1533,#160f28); border:1px solid #2d2145; border-radius:13px; padding:14px 16px; transition:transform 0.2s ease, border-color 0.2s ease; }
+  .sum-card:hover { transform:translateY(-2px); border-color:#8b5cf6; }
+  .sum-card .label { font-size:12px; color:#9d8fc4; margin-bottom:4px; }
+  .sum-card .value { font-size:24px; font-weight:500; color:#fff; }
+
+  .alert-box { background:#1a0f1a; border:1px solid #4a1e2a; border-radius:13px; overflow:hidden; margin-bottom:14px; animation:pulseRed 2.5s ease infinite; }
+  .alert-head { background:#2e1420; color:#f87171; font-size:12px; font-weight:500; padding:8px 16px; display:flex; align-items:center; gap:6px; }
+
+  .table-wrap { background:#160f28; border:1px solid #2d2145; border-radius:13px; overflow:hidden; }
+  table { width:100%; border-collapse:collapse; font-size:13px; table-layout:fixed; }
+  th { background:#1c1430; color:#9d8fc4; font-weight:500; padding:10px 16px; text-align:left; }
+  th:nth-child(1),td:nth-child(1){ width:28%; }
+  th:nth-child(2),td:nth-child(2){ width:15%; text-align:center; }
+  th:nth-child(3),td:nth-child(3){ width:15%; text-align:right; }
+  th:nth-child(4),td:nth-child(4){ width:22%; text-align:center; }
+  th:nth-child(5),td:nth-child(5){ width:20%; text-align:right; }
+  tbody tr { border-top:1px solid #241b38; transition:background 0.25s ease; }
+  tbody tr:hover { background:#241b38; }
+  td { padding:11px 16px; }
+  td:first-child { padding-left:13px; }
+  .uname { font-weight:500; color:#fff; }
+
+  .ci-icons { display:inline-flex; gap:4px; align-items:center; }
+  .ci { display:inline-flex; width:21px; height:21px; border-radius:50%; align-items:center; justify-content:center; font-size:11px; }
+  .ci-green { background:#1a2e1f; color:#4ade80; }
+  .ci-red { background:#2e1420; color:#f87171; }
+  .ci-gray { background:#241b38; color:#6b5f8a; }
+  .ci-btn { width:21px; height:21px; border-radius:50%; padding:0; font-size:11px; background:#2d2145; color:#c4b5fd; border:none; cursor:pointer; transition:all 0.15s ease; display:inline-flex; align-items:center; justify-content:center; }
+  .ci-btn:hover { background:#8b5cf6; color:#fff; transform:scale(1.1); }
+  .ci-wide { display:inline-flex; padding:2px 9px; border-radius:999px; font-size:10px; }
+  .ci-offshift { background:#241b38; color:#6b5f8a; }
+  .ci-holiday { background:#33280f; color:#fbbf24; }
+  .ci-time { font-size:9px; color:#4ade80; font-family:monospace; }
+
+  .badge { display:inline-flex; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:500; }
+  .b-back { background:#1a2e1f; color:#4ade80; }
+  .b-heavy { background:#2e1420; color:#f87171; }
+  .b-light { background:#33280f; color:#fbbf24; }
+  .b-food { background:#33280f; color:#fbbf24; }
+  .b-over { background:#3a1015; color:#ff6b6b; animation:badgePulse 1.2s ease infinite; }
+
+  .tcell { font-family:monospace; color:#c4b5fd; }
+  .tcell.idle { color:#6b5f8a; font-family:inherit; }
+  .tcell.over { color:#ff6b6b; font-weight:500; }
+  .total { font-family:monospace; color:#6b5f8a; }
+  .dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+</style>
+</head>
+<body>
+
+<div class="content">
+  <div class="header">
+    <div class="title-wrap">
+      <i class="ti ti-clipboard-list" style="font-size:22px; color:#a78bfa;" aria-hidden="true"></i>
+      <span class="title">สถานะพนักงานวันนี้</span>
+      <span class="live" id="live-badge"><span class="dot"></span> เรียลไทม์</span>
+    </div>
+    <div class="header-right">
+      <div class="shift-seg" id="shift-seg">
+        <button class="shift-btn active" data-shift="auto">อัตโนมัติ</button>
+        <button class="shift-btn" data-shift="เช้า">เช้า</button>
+        <button class="shift-btn" data-shift="ดึก">ดึก</button>
+      </div>
+      <button class="edit-link" id="checkin-lock-btn" onclick="toggleCheckinLock()"></button>
+      <a href="/shifts" class="edit-link"><i class="ti ti-settings" aria-hidden="true"></i> แก้กะ</a>
+      <span class="updated" id="updated"></span>
+    </div>
+  </div>
+
+  <div class="summary" id="summary"></div>
+  <div id="alert-zone"></div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ผู้ใช้</th>
+          <th>เช็คชื่อ</th>
+          <th>เวลา</th>
+          <th>สถานะ</th>
+          <th>รวมวันนี้</th>
+        </tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const FLOAT_EMOJIS = ["✨","🌟","💜","🔮","⭐"];
+function spawnEmoji(){
+  const el=document.createElement("div"); el.className="bg-emoji";
+  el.textContent=FLOAT_EMOJIS[Math.floor(Math.random()*FLOAT_EMOJIS.length)];
+  el.style.left=Math.random()*100+"vw";
+  const d=10+Math.random()*12; el.style.animationDuration=d+"s";
+  el.style.fontSize=(16+Math.random()*12)+"px";
+  document.body.appendChild(el); setTimeout(()=>el.remove(),d*1000);
+}
+setInterval(spawnEmoji,1400);
+for(let i=0;i<5;i++) setTimeout(spawnEmoji,i*400);
+
+const OVERTIME_LIMITS={"ปวดหนัก":20*60,"ปวดน้อย":6*60,"กินข้าว":30*60};
+const overtimeAlerted=new Set(), warningAlerted=new Set();
+let selectedShift="auto", latestData=null, dataReceivedAt=0, eventSource=null;
+let lastSig=null, lastRenderAt=0;
+
+// ล็อกไว้เป็นค่าเริ่มต้นเสมอทุกครั้งที่เปิด/รีเฟรชหน้า กันเผลอกดปุ่ม + ตอนแค่ดูจอเฉยๆ
+let checkinUnlocked=false;
+function renderCheckinLockUI(){
+  document.body.classList.toggle("checkin-locked",!checkinUnlocked);
+  const btn=document.getElementById("checkin-lock-btn");
+  btn.classList.toggle("unlocked",checkinUnlocked);
+  btn.innerHTML=checkinUnlocked
+    ? '<i class="ti ti-lock-open" aria-hidden="true"></i> ปลดล็อกเช็คชื่ออยู่'
+    : '<i class="ti ti-lock" aria-hidden="true"></i> ล็อกเช็คชื่ออยู่';
+}
+function toggleCheckinLock(){
+  checkinUnlocked=!checkinUnlocked;
+  renderCheckinLockUI();
+}
+renderCheckinLockUI();
+
+let cachedThaiVoice=null;
+function pickThaiVoice(){
+  const v=window.speechSynthesis.getVoices();
+  if(!v||!v.length) return null;
+  const th=v.filter(x=>x.lang&&x.lang.toLowerCase().startsWith("th"));
+  if(!th.length) return null;
+  return th.find(x=>x.name.toLowerCase().includes("google"))||th[0];
+}
+if(window.speechSynthesis){ cachedThaiVoice=pickThaiVoice(); window.speechSynthesis.onvoiceschanged=()=>{cachedThaiVoice=pickThaiVoice();}; }
+function speakText(t){
+  try{ window.speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(t); u.lang="th-TH";
+    if(cachedThaiVoice) u.voice=cachedThaiVoice; u.rate=0.95;
+    setTimeout(()=>window.speechSynthesis.speak(u),80);
+  }catch(e){}
+}
+function speakAlert(n,a){ speakText(`${n.split("-").slice(0,2).join(" ")} เกินเวลา${a}แล้ว รีบกลับที่นั่งให้ไว`); }
+function speakWarning(n,a){ speakText(`${n.split("-").slice(0,2).join(" ")} จะเกินเวลา${a}แล้ว ให้รีบกดกลับครับ`); }
+
+// กันชื่อผู้ใช้ที่มีอักขระ HTML (เช่น <img onerror=...>) รันสคริปต์บนหน้าเว็บ
+function esc(v){ return String(v==null?"":v).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+function badgeClass(s){ return s==="กลับที่นั่ง"?"b-back":s==="ปวดหนัก"?"b-heavy":s==="ปวดน้อย"?"b-light":s==="กินข้าว"?"b-food":""; }
+function fmtDur(sec){ sec=Math.max(0,Math.floor(sec)); const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60; return [h,m,s].map(v=>String(v).padStart(2,"0")).join(":"); }
+function fmtAgo(sec){ const m=Math.floor(sec/60); return m<1?"กลับมาเมื่อสักครู่":`กลับมา ${m} นาทีที่แล้ว`; }
+
+async function manualCheckin(userId, round){
+  if(!checkinUnlocked){
+    // ล็อกไว้เป็นค่าเริ่มต้น กันเผลอกดปุ่ม + ตอนแค่ดูจอ ต้องกดปลดล็อกที่ปุ่มบนหัวก่อนเสมอ
+    alert("ต้องกดปลดล็อกเช็คชื่อ (ปุ่มบนหัวจอ) ก่อน ถึงจะกดเช็คชื่อมือได้ — กันเผลอกดพลาด");
+    return;
+  }
+  try{
+    const res=await fetch("/api/manual-checkin",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:userId,round:round,shift:selectedShift==="auto"?null:selectedShift})});
+    if(!res.ok){
+      // เช่น กดข้ามลำดับ (รอบ 2/3 ก่อนรอบก่อนหน้าจะประกาศ) — เดิม fetch ไม่ throw ตอน backend ตอบ error
+      // ทำให้กดแล้วเงียบ ไม่มีอะไรเกิดขึ้น ไม่รู้ว่าทำไมไม่ขึ้นเขียว
+      const err=await res.json().catch(()=>({}));
+      alert(err.error||"เช็คชื่อไม่สำเร็จ");
+      return;
+    }
+    loadData();
+  }catch(e){ console.error("เช็คชื่อมือไม่สำเร็จ",e); }
+}
+
+function ciIconHtml(round, roundNum, userId){
+  if(round.status==="green") return `<span class="ci ci-green" title="รอบ ${roundNum}${round.time?' · '+round.time:''}"><i class="ti ti-check" aria-hidden="true"></i></span>`;
+  if(round.status==="red") return `<button class="ci-btn" title="กดเพื่อเช็คชื่อรอบ ${roundNum}" onclick="manualCheckin('${userId}',${roundNum})"><i class="ti ti-plus" aria-hidden="true"></i></button>`;
+  return `<button class="ci-btn" style="background:#241b38;color:#6b5f8a;" title="ยังไม่ประกาศ — กดเพื่อเช็คชื่อรอบ ${roundNum}" onclick="manualCheckin('${userId}',${roundNum})">·</button>`;
+}
+
+function setupShiftSelector(){
+  document.querySelectorAll(".shift-btn").forEach(btn=>{
+    btn.addEventListener("click",()=>{
+      selectedShift=btn.dataset.shift;
+      document.querySelectorAll(".shift-btn").forEach(b=>b.classList.toggle("active",b===btn));
+      // ปิดสตรีมของกะเก่าทันที ไม่งั้นระหว่างรอ loadData() โหลดเสร็จ ข้อความ SSE ของกะเก่าจะยังเด้งมาวาดทับ
+      if(eventSource){ eventSource.close(); eventSource=null; }
+      loadData().then(connectSSE);
+    });
+  });
+}
+setupShiftSelector();
+
+// ลายเซ็นของ "เนื้อหาจริง" ไม่รวมตัวเลขเวลาที่เดินอยู่ตลอด (นับใหม่ทุกวิจะกระพริบ)
+// แต่รวมสถานะ "เกิน/ใกล้เกินเวลา" ไว้ด้วย เพราะเป็นค่าที่ต้องอัปเดต badge/กล่องเตือน/เสียงพูดทันทีที่เปลี่ยน
+// (เดิมไม่รวม ทำให้ค้างได้นานสุด 30 วิ ถึงจะขึ้นแดง/มีเสียงเตือน ทั้งที่ตัวเลขเวลาในตารางเกินไปแล้ว)
+function sigOf(d){
+  return JSON.stringify([d.current_shift, d.summary,
+    d.people.map(p=>{
+      const lim=OVERTIME_LIMITS[p.status];
+      const isOT=p.status!=="กลับที่นั่ง"&&lim&&p.duration_seconds>lim;
+      const isNear=p.status!=="กลับที่นั่ง"&&lim&&!isOT&&p.duration_seconds>=(lim-60);
+      return [p.user_id,p.username,p.status,p.since,isOT,isNear,
+        p.checkin?[p.checkin.round1.status,p.checkin.round1.time,
+                   p.checkin.round2.status,p.checkin.round2.time,
+                   p.checkin.round3.status,p.checkin.round3.time]:null];
+    })]);
+}
+
+function renderData(data){
+  if(!data) return;
+  const sig=sigOf(data);
+  // ถ้าเปลี่ยนแค่ตัวเลขเวลา ไม่ต้องวาดตารางใหม่ ปล่อยให้ timer ในเบราว์เซอร์เดินเอง
+  // (บังคับวาดใหม่อย่างน้อยทุก 30 วิ เผื่อรอบกะรีเซ็ต)
+  if(sig===lastSig && Date.now()-lastRenderAt<30000) return;
+  lastSig=sig; lastRenderAt=Date.now(); dataReceivedAt=Date.now();
+  renderToDOM(data);
+}
+
+function renderToDOM(data){
+  try{
+    const autoBtn=document.querySelector('.shift-btn[data-shift="auto"]');
+    if(autoBtn&&data.current_shift) autoBtn.textContent=selectedShift==="auto"?`อัตโนมัติ (${data.current_shift})`:"อัตโนมัติ";
+
+    document.getElementById("summary").innerHTML=`
+      <div class="sum-card"><div class="label">ออกนอกที่นั่ง</div><div class="value">${data.summary.out_now}</div></div>
+      ${Object.entries(data.summary.activity_counts_today).map(([a,c])=>`<div class="sum-card"><div class="label">${esc(a)}วันนี้</div><div class="value">${c} ครั้ง</div></div>`).join("")}`;
+
+    const people=[...data.people].sort((a,b)=>{
+      const pr=p=>{ if(!p.checkin)return 0; if(p.checkin.round1.status==="offshift")return 2; if(p.checkin.round1.status==="holiday")return 1; return 0; };
+      const pa=pr(a),pb=pr(b); if(pa!==pb) return pa-pb;
+      const aa=a.status!=="กลับที่นั่ง",ba=b.status!=="กลับที่นั่ง";
+      if(aa!==ba) return aa?-1:1;
+      if(!aa&&!ba) return a.duration_seconds-b.duration_seconds;
+      return 0;
+    });
+
+    const newOT=[],newW=[],curOT=new Set(),curW=new Set();
+    people.forEach(p=>{
+      const isBack=p.status==="กลับที่นั่ง", lim=OVERTIME_LIMITS[p.status];
+      const isOT=!isBack&&lim&&p.duration_seconds>lim;
+      const isNear=!isBack&&lim&&!isOT&&p.duration_seconds>=(lim-60);
+      if(isOT){ curOT.add(p.user_id); if(!overtimeAlerted.has(p.user_id)) newOT.push({username:p.username,activity:p.status}); }
+      else if(isNear){ curW.add(p.user_id); if(!warningAlerted.has(p.user_id)) newW.push({username:p.username,activity:p.status}); }
+    });
+    newW.forEach((p,i)=>setTimeout(()=>speakWarning(p.username,p.activity),i*3000));
+    newOT.forEach((p,i)=>setTimeout(()=>speakAlert(p.username,p.activity),(newW.length+i)*3000));
+    overtimeAlerted.clear(); curOT.forEach(x=>overtimeAlerted.add(x));
+    warningAlerted.clear(); curW.forEach(x=>warningAlerted.add(x));
+
+    function rowData(p){
+      const isBack=p.status==="กลับที่นั่ง", lim=OVERTIME_LIMITS[p.status];
+      const isOT=!isBack&&lim&&p.duration_seconds>lim;
+      const label=isOT?`เกินเวลา${p.status}`:p.status;
+      const bcls=isOT?"b-over":badgeClass(p.status);
+      const warn=isOT?'<i class="ti ti-alert-triangle" style="font-size:10px;" aria-hidden="true"></i> ':"";
+      const elapsed=Math.floor((Date.now()-dataReceivedAt)/1000);
+      const dur=(p.duration_seconds||0)+elapsed;  // นับต่อทุกกรณี รวมคนที่กลับที่นั่งแล้ว
+      const timeHtml=isBack?`<span class="tcell idle" data-countdown="${p.duration_seconds||0}" data-back="1">${fmtAgo(dur)}</span>`
+        :isOT?`<span class="tcell over" data-countdown="${p.duration_seconds||0}" data-limit="${lim}">+${fmtDur(dur-lim)}</span>`
+        :lim?`<span class="tcell" data-countdown="${p.duration_seconds||0}" data-limit="${lim}">${fmtDur(lim-dur)}</span>`
+        :`<span class="tcell" data-countdown="${p.duration_seconds||0}">${fmtDur(dur)}</span>`;
+      const isHoliday=p.checkin&&p.checkin.round1.status==="holiday";
+      const isOff=p.checkin&&p.checkin.round1.status==="offshift";
+      let ci;
+      if(!p.checkin) ci="";
+      else if(isHoliday) ci=`<span class="ci-wide ci-holiday">วันหยุด</span>`;
+      else if(isOff) ci=`<span class="ci-wide ci-offshift">ไม่ใช่กะนี้</span>`;
+      else ci=`<span class="ci-icons">${ciIconHtml(p.checkin.round1,1,p.user_id)}${ciIconHtml(p.checkin.round2,2,p.user_id)}${ciIconHtml(p.checkin.round3,3,p.user_id)}</span>`;
+      return {isOT, label, bcls, warn, timeHtml, ci, isBack};
+    }
+
+    // โซนเตือน (คนเกินเวลา/ใกล้เกิน)
+    const alertPeople=people.filter(p=>{
+      const lim=OVERTIME_LIMITS[p.status];
+      return p.status!=="กลับที่นั่ง"&&lim&&p.duration_seconds>=(lim-60);
+    });
+    const az=document.getElementById("alert-zone");
+    if(alertPeople.length){
+      az.innerHTML=`<div class="alert-box"><div class="alert-head"><i class="ti ti-alert-triangle" aria-hidden="true"></i> ต้องดูก่อน · ${alertPeople.length} คน</div>
+        ${alertPeople.map((p,i)=>{ const r=rowData(p); const lim=OVERTIME_LIMITS[p.status]; const isOT=p.duration_seconds>lim;
+          return `<div style="display:flex;align-items:center;gap:14px;padding:11px 16px;border-top:1px solid #2d1520;">
+            <span class="dot" style="background:${isOT?'#f87171':'#fbbf24'};"></span>
+            <span class="uname" style="flex:1;font-size:13px;">${esc(p.username)}</span>
+            ${r.ci}
+            <span style="font-size:12px;color:${isOT?'#f87171':'#fbbf24'};width:90px;text-align:right;">${esc(p.status)}</span>
+            <span class="tcell ${isOT?'over':''}" style="width:64px;text-align:right;">${isOT?'+'+fmtDur(p.duration_seconds-lim):fmtDur(lim-p.duration_seconds)}</span>
+          </div>`; }).join("")}</div>`;
+    } else az.innerHTML="";
+
+    document.getElementById("table-body").innerHTML=people.map((p,i)=>{
+      const r=rowData(p);
+      const isActive=!r.isBack;
+      const actColor=p.status==="ปวดหนัก"?"#f87171":p.status==="ปวดน้อย"?"#fbbf24":p.status==="กินข้าว"?"#fbbf24":"#8b5cf6";
+      let rowStyle="";
+      if(r.isOT){ rowStyle=`background:#1a0f14;border-left:3px solid #f87171;`; }
+      else if(isActive){ rowStyle=`background:#1a1330;border-left:3px solid ${actColor};`; }
+      else { rowStyle=`border-left:3px solid transparent;`; }
+      if(p.checkin&&(p.checkin.round1.status==='offshift'||p.checkin.round1.status==='holiday')) rowStyle+="opacity:0.5;";
+      return `<tr style="${rowStyle}">
+        <td><span class="uname">${esc(p.username)}</span></td>
+        <td>${r.ci}</td>
+        <td>${r.timeHtml}</td>
+        <td><span class="badge ${r.bcls}">${r.warn}${esc(r.label)}</span></td>
+        <td><span class="total" data-total="${p.total_today_seconds||0}" data-active="${p.status!=="กลับที่นั่ง"?1:0}">${fmtDur((p.total_today_seconds||0)+(p.status!=="กลับที่นั่ง"?Math.floor((Date.now()-dataReceivedAt)/1000):0))}</span></td>
+      </tr>`;
+    }).join("");
+
+    document.getElementById("updated").textContent="อัปเดต "+new Date().toLocaleTimeString("th-TH");
+  }catch(e){ console.error("แสดงผลไม่สำเร็จ",e); }
+}
+
+async function loadData(){
+  const requestedShift=selectedShift;  // จำไว้ว่าตอนยิง request เลือกกะไหนอยู่
+  try{
+    const url=requestedShift==="auto"?"/api/status":`/api/status?shift=${encodeURIComponent(requestedShift)}`;
+    const res=await fetch(url); const data=await res.json();
+    // ระหว่างรอ อาจมีการสลับกะไปแล้ว — ทิ้งผลลัพธ์เก่าที่มาถึงช้า ไม่ให้วาดทับกะที่เลือกอยู่ตอนนี้
+    if(requestedShift!==selectedShift) return;
+    latestData=data; renderData(data);
+  }catch(e){ console.error("โหลดไม่สำเร็จ",e); }
+}
+
+function connectSSE(){
+  if(eventSource) eventSource.close();
+  const url=selectedShift==="auto"?"/api/stream":`/api/stream?shift=${encodeURIComponent(selectedShift)}`;
+  eventSource=new EventSource(url);
+  eventSource.onmessage=(e)=>{
+    try{ latestData=JSON.parse(e.data); renderData(latestData);
+      document.getElementById("live-badge").classList.remove("off");
+      document.getElementById("live-badge").innerHTML='<span class="dot"></span> เรียลไทม์';
+    }catch(err){}
+  };
+  eventSource.onerror=()=>{
+    document.getElementById("live-badge").classList.add("off");
+    document.getElementById("live-badge").innerHTML='<span class="dot"></span> กำลังต่อใหม่';
+    // ถ้า browser ปิด stream แบบถาวร (เช่น proxy ตอบไม่ใช่ text/event-stream) มันจะไม่ auto-retry ให้เอง
+    // ต้องเปิดใหม่มือ ไม่งั้นค้างคำว่า "กำลังต่อใหม่" ตลอดไปโดยไม่มีการต่อจริง
+    if(eventSource && eventSource.readyState===EventSource.CLOSED){
+      setTimeout(connectSSE,3000);
+    }
+  };
+}
+
+loadData().then(connectSSE);
+
+// timer เดินเวลาเฉพาะตัวเลข ไม่ re-render ทั้งตาราง (ป้องกันกระพริบ)
+setInterval(()=>{
+  if(!latestData) return;
+  const elapsed=Math.floor((Date.now()-dataReceivedAt)/1000);
+  document.querySelectorAll("[data-countdown]").forEach(el=>{
+    const base=parseInt(el.dataset.countdown), lim=parseInt(el.dataset.limit||"0"), isBack=el.dataset.back==="1";
+    const dur=base+elapsed;  // นับต่อทุกกรณี รวมคนที่กลับที่นั่งแล้ว
+    if(isBack){ el.textContent=fmtAgo(dur); }
+    else if(lim && dur>lim){ el.textContent="+"+fmtDur(dur-lim); el.className="tcell over"; }
+    else if(lim){ el.textContent=fmtDur(lim-dur); }
+    else { el.textContent=fmtDur(dur); }
+  });
+  document.querySelectorAll("[data-total]").forEach(el=>{
+    const base=parseInt(el.dataset.total), active=el.dataset.active==="1";
+    el.textContent=fmtDur(base+(active?elapsed:0));
+  });
+},1000);
+</script>
+
+</body>
+</html>
