@@ -516,6 +516,18 @@ async def checkin_skip_reason(event, text):
 
 @client.on(events.NewMessage(chats=CHAT_IDS))
 async def handler(event):
+    await process_event(event)
+
+
+@client.on(events.MessageEdited(chats=CHAT_IDS))
+async def edited_handler(event):
+    # บางบอทประกาศรอบ (เช่น OA-IVY-ONLINE) แก้ไข (edit) ข้อความเดิมแทนที่จะส่งข้อความใหม่
+    # NewMessage ไม่ trigger ให้กับข้อความที่ถูกแก้ไข ต้องดัก MessageEdited แยกด้วย
+    # ไม่งั้นการประกาศรอบจะเงียบหายไปทั้งที่ข้อความจริงเปลี่ยนแล้วในกลุ่ม
+    await process_event(event)
+
+
+async def process_event(event):
     # raw_text = ข้อความล้วน ไม่มีสัญลักษณ์ markdown (** __ ` ) ปนมา
     # ถ้าใช้ .text บอทที่ใส่ตัวหนา/ขีดเส้นใต้จะทำให้ regex หาไม่เจอ
     text = event.message.raw_text or event.message.text or ""
