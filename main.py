@@ -1,6 +1,7 @@
 import os
 import re
 import asyncio
+import calendar
 import threading
 import time
 import json as _json
@@ -312,11 +313,22 @@ def init_db():
                 shift TEXT
             )
         """)
+        # ตารางกะรายวัน (ปฏิทิน) — แยกจาก shift_assignments.shift ซึ่งเป็นแค่กะ "ปกติ" ของแต่ละคน
+        # ตารางนี้ใช้บันทึกวันหยุด/สลับกะล่วงหน้าเป็นรายวันของแต่ละเดือน (D=เช้า, N=ดึก, X=หยุด)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS shift_calendar (
+                username TEXT NOT NULL,
+                day DATE NOT NULL,
+                code TEXT NOT NULL,
+                PRIMARY KEY (username, day)
+            )
+        """)
         # เพิ่ม index เพื่อให้ query เร็วขึ้น (สำคัญมากเมื่อข้อมูลสะสมเยอะ)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_status_log_ts ON status_log (timestamp)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_status_log_user_ts ON status_log (user_id, timestamp)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_status_log_username ON status_log (username)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_current_status_since ON current_status (since)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_shift_calendar_day ON shift_calendar (day)")
 
 
 def get_period_start(now, override=None):
@@ -644,6 +656,11 @@ def serve_shift_editor():
     return send_from_directory(BASE_DIR, "shift_editor.html")
 
 
+@app.route("/shift-calendar")
+def serve_shift_calendar():
+    return send_from_directory(BASE_DIR, "shift_calendar.html")
+
+
 @app.route("/api/shift-assignments", methods=["GET"])
 def get_shift_assignments():
     active_since = datetime.now(timezone.utc) - timedelta(days=ACTIVE_DAYS)
@@ -691,6 +708,84 @@ def delete_shift_assignment(username):
     with db(commit=True) as cur:
         cur.execute("DELETE FROM shift_assignments WHERE username = %s", (username,))
     invalidate_shift_cache()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/shift-calendar", methods=["GET"])
+def get_shift_calendar():
+    """ตารางกะรายวันของทั้งเดือน (D=เช้า, N=ดึก, X=หยุด) แยกตามหมวดหมู่ — เป็นตารางอ้างอิง
+    ยังไม่ผูกกับ logic เช็คชื่อ/รอบ (shift_assignments.shift ยังเป็นตัวกำหนดกะปัจจุบันเหมือนเดิม)"""
+    now_bkk = datetime.now(BANGKOK_TZ)
+    try:
+        year = int(request.args.get("year") or now_bkk.year)
+        month = int(request.args.get("month") or now_bkk.month)
+    except ValueError:
+        return jsonify({"error": "year/month ต้องเป็นตัวเลข"}), 400
+    if not (1 <= month <= 12):
+        return jsonify({"error": "month ต้องอยู่ระหว่าง 1-12"}), 400
+
+    days_in_month = calendar.monthrange(year, month)[1]
+    first_day = f"{year:04d}-{month:02d}-01"
+    last_day = f"{year:04d}-{month:02d}-{days_in_month:02d}"
+
+    with db() as cur:
+        cur.execute("SELECT username, shift FROM shift_assignments ORDER BY username")
+        assignments = cur.fetchall()
+        cur.execute(
+            "SELECT username, day, code FROM shift_calendar WHERE day BETWEEN %s AND %s",
+            (first_day, last_day),
+        )
+        cal_rows = cur.fetchall()
+
+    days_by_user = defaultdict(dict)
+    for r in cal_rows:
+        days_by_user[r["username"]][r["day"].day] = r["code"]
+
+    people = [
+        {
+            "username": a["username"],
+            "shift": a["shift"],
+            "category": get_category(a["username"]),
+            "days": days_by_user.get(a["username"], {}),
+        }
+        for a in assignments
+    ]
+
+    return jsonify({
+        "year": year, "month": month, "days_in_month": days_in_month,
+        "people": people, "categories": CATEGORIES,
+    })
+
+
+@app.route("/api/shift-calendar", methods=["POST"])
+def set_shift_calendar_day():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    day = (data.get("day") or "").strip()
+    code = data.get("code")
+    if code is not None:
+        code = str(code).strip().upper()
+
+    if not username or not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
+        return jsonify({"error": "ต้องระบุ username และ day รูปแบบ YYYY-MM-DD"}), 400
+    if code is not None and code not in ("D", "N", "X"):
+        return jsonify({"error": "code ต้องเป็น 'D', 'N', 'X' หรือค่าว่าง (ล้างค่า)"}), 400
+
+    with db(commit=True) as cur:
+        if code is None:
+            cur.execute(
+                "DELETE FROM shift_calendar WHERE username = %s AND day = %s",
+                (username, day),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO shift_calendar (username, day, code)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (username, day) DO UPDATE SET code = EXCLUDED.code
+                """,
+                (username, day, code),
+            )
     return jsonify({"ok": True})
 
 

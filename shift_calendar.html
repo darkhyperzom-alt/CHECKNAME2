@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>ตารางกะรายเดือน</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Tahoma", "Segoe UI", sans-serif;
+    background: #0f0f14;
+    margin: 0;
+    padding: 32px;
+    color: #e6e6e6;
+  }
+  .content { max-width: 1200px; margin: 0 auto; }
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 6px;
+    color: #fff;
+  }
+  .back-link {
+    font-size: 13px;
+    color: #9a9aa8;
+    text-decoration: none;
+  }
+  .back-link:hover { color: #fff; }
+  .sub { font-size: 13px; color: #9a9aa8; margin: 6px 0 0; }
+
+  .month-nav {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 20px 0;
+  }
+  .month-nav button {
+    background: #15151a;
+    border: 1px solid #2a2a35;
+    color: #e6e6e6;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    font-size: 15px;
+    cursor: pointer;
+  }
+  .month-nav button:hover { border-color: #6366f1; color: #c4b5fd; }
+  .month-label { font-size: 15px; font-weight: 600; color: #fff; min-width: 150px; text-align: center; }
+
+  .legend { display: flex; gap: 16px; align-items: center; font-size: 12px; color: #9a9aa8; margin-left: auto; }
+  .legend-item { display: flex; align-items: center; gap: 5px; }
+  .legend-swatch { width: 14px; height: 14px; border-radius: 4px; }
+
+  .status-msg { font-size: 13px; margin: 10px 0; min-height: 18px; }
+  .status-msg.error { color: #e57373; }
+  .status-msg.success { color: #4caf6e; }
+
+  .cat-section { margin: 24px 0 10px; }
+  .cat-title { font-size: 14px; font-weight: 600; color: #c9c9d6; display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
+  .cat-count { font-size: 11px; color: #6f6f7d; font-weight: 500; }
+
+  .table-wrap {
+    background: #15151a;
+    border: 1px solid #2a2a35;
+    border-radius: 14px;
+    overflow-x: auto;
+  }
+  table { border-collapse: collapse; }
+  th, td { padding: 0; font-size: 12px; text-align: center; white-space: nowrap; }
+  thead th { background: #1a1a22; color: #9a9aa8; font-weight: 500; padding: 8px 6px; }
+  tr { border-bottom: 1px solid #21212a; }
+  tr:last-child { border-bottom: none; }
+
+  th.name-col, td.name-col {
+    position: sticky;
+    left: 0;
+    background: #15151a;
+    z-index: 1;
+    text-align: left;
+    padding: 8px 14px;
+    min-width: 160px;
+    border-right: 1px solid #2a2a35;
+  }
+  thead th.name-col { background: #1a1a22; z-index: 2; }
+  .name-shift { font-size: 11px; color: #6f6f7d; margin-left: 6px; }
+  .name-shift.เช้า { color: #4caf6e; }
+  .name-shift.ดึก { color: #8a8aff; }
+
+  td.day-col { width: 30px; }
+  th.day-col { width: 30px; font-weight: 400; }
+  th.day-col.today, td.day-col.today { background: #1c1730; }
+
+  td.off-col { padding: 8px 10px; color: #d1a94a; font-family: monospace; font-weight: 600; }
+
+  .cal-cell {
+    width: 26px;
+    height: 26px;
+    border: none;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+    color: #6f6f7d;
+    background: #1a1a22;
+  }
+  .cal-cell:hover { outline: 1px solid #6366f1; }
+  .cal-cell.cal-D { background: #16331f; color: #4caf6e; }
+  .cal-cell.cal-N { background: #1a1a3a; color: #8a8aff; }
+  .cal-cell.cal-X { background: #3a1717; color: #e57373; }
+
+  .empty-msg { padding: 20px; text-align: center; color: #6f6f7d; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div class="content">
+  <a href="/" class="back-link">← กลับหน้าแดชบอร์ด</a>
+  <h1 style="margin-top:8px;">📅 ตารางกะรายเดือน</h1>
+  <p class="sub">คลิกที่ช่องวันเพื่อสลับ เช้า → ดึก → หยุด → ว่าง — ตารางนี้เป็นตารางอ้างอิง ยังไม่มีผลต่อการเช็คชื่อ/รอบอัตโนมัติ (กะปัจจุบันยังยึดจาก <a href="/shifts" style="color:#a094c0;">หน้าแก้ไขกะ</a> เหมือนเดิม)</p>
+
+  <div class="month-nav">
+    <button id="prev-month" title="เดือนก่อนหน้า">‹</button>
+    <span class="month-label" id="month-label"></span>
+    <button id="next-month" title="เดือนถัดไป">›</button>
+    <div class="legend">
+      <div class="legend-item"><span class="legend-swatch" style="background:#16331f; color:#4caf6e;"></span> D = เช้า</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:#1a1a3a; color:#8a8aff;"></span> N = ดึก</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:#3a1717; color:#e57373;"></span> X = หยุด</div>
+    </div>
+  </div>
+
+  <div class="status-msg" id="status-msg"></div>
+
+  <div id="sections"></div>
+</div>
+
+<script>
+function esc(v){ return String(v==null?"":v).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+function setMsg(text, ok){
+  const el = document.getElementById("status-msg");
+  el.textContent = text;
+  el.className = "status-msg " + (ok ? "success" : "error");
+}
+
+const MONTH_NAMES = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน",
+                      "กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
+const CYCLE = [null, "D", "N", "X"];
+
+const nowLocal = new Date();
+const state = { year: nowLocal.getFullYear(), month: nowLocal.getMonth() + 1 };
+const todayKey = { year: nowLocal.getFullYear(), month: nowLocal.getMonth() + 1, day: nowLocal.getDate() };
+
+function nextCode(code) {
+  const idx = CYCLE.indexOf(code || null);
+  return CYCLE[(idx + 1) % CYCLE.length];
+}
+
+function dayCellHtml(username, dayNum, code) {
+  const cls = "cal-cell" + (code ? ` cal-${code}` : "");
+  const todayCls = (state.year === todayKey.year && state.month === todayKey.month && dayNum === todayKey.day) ? " today" : "";
+  return `<td class="day-col${todayCls}"><button type="button" class="${cls}" data-username="${esc(username)}" data-day="${dayNum}" data-code="${code || ""}">${code || ""}</button></td>`;
+}
+
+function rowHtml(p, daysInMonth) {
+  const shiftTag = p.shift ? `<span class="name-shift ${esc(p.shift)}">${esc(p.shift)}</span>` : "";
+  let cells = "";
+  let offCount = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const code = p.days[d] || p.days[String(d)] || null;
+    if (code === "X") offCount++;
+    cells += dayCellHtml(p.username, d, code);
+  }
+  return `
+    <tr data-username="${esc(p.username)}">
+      <td class="name-col">${esc(p.username)}${shiftTag}</td>
+      ${cells}
+      <td class="off-col">${offCount}</td>
+    </tr>`;
+}
+
+function headerRowHtml(daysInMonth) {
+  let cells = "";
+  for (let d = 1; d <= daysInMonth; d++) {
+    const todayCls = (state.year === todayKey.year && state.month === todayKey.month && d === todayKey.day) ? " today" : "";
+    cells += `<th class="day-col${todayCls}">${d}</th>`;
+  }
+  return `<tr><th class="name-col">ชื่อ</th>${cells}<th class="off-col" style="text-align:center;">หยุด</th></tr>`;
+}
+
+async function loadCalendar() {
+  document.getElementById("month-label").textContent = `${MONTH_NAMES[state.month - 1]} ${state.year}`;
+
+  const res = await fetch(`/api/shift-calendar?year=${state.year}&month=${state.month}`);
+  const data = await res.json();
+  const daysInMonth = data.days_in_month;
+
+  const sections = document.getElementById("sections");
+  if (!data.people || data.people.length === 0) {
+    sections.innerHTML = `<div class="table-wrap"><div class="empty-msg">ยังไม่มีรายชื่อ — เพิ่มคนได้ที่หน้าแก้ไขกะก่อน</div></div>`;
+    return;
+  }
+
+  const byCat = {};
+  data.people.forEach(p => { (byCat[p.category] = byCat[p.category] || []).push(p); });
+  const catOrder = [...(data.categories || []), "อื่นๆ"].filter(c => byCat[c] && byCat[c].length);
+
+  sections.innerHTML = catOrder.map(cat => {
+    const rows = [...byCat[cat]].sort((x, y) => x.username.localeCompare(y.username));
+    return `
+      <div class="cat-section">
+        <h2 class="cat-title">${esc(cat)} <span class="cat-count">${rows.length} คน</span></h2>
+        <div class="table-wrap">
+          <table>
+            <thead>${headerRowHtml(daysInMonth)}</thead>
+            <tbody>${rows.map(p => rowHtml(p, daysInMonth)).join("")}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+document.getElementById("sections").addEventListener("click", async (e) => {
+  const btn = e.target.closest(".cal-cell");
+  if (!btn || btn.disabled) return;
+
+  const username = btn.dataset.username;
+  const day = btn.dataset.day;
+  const current = btn.dataset.code || null;
+  const next = nextCode(current);
+  const dateStr = `${state.year}-${String(state.month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/shift-calendar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, day: dateStr, code: next }),
+    });
+    if (!res.ok) throw new Error("บันทึกไม่สำเร็จ");
+
+    btn.dataset.code = next || "";
+    btn.textContent = next || "";
+    btn.className = "cal-cell" + (next ? ` cal-${next}` : "");
+
+    const row = btn.closest("tr");
+    const offCell = row.querySelector(".off-col");
+    if (offCell) offCell.textContent = row.querySelectorAll(".cal-X").length;
+    setMsg("", true);
+  } catch (err) {
+    setMsg("เกิดข้อผิดพลาด: " + err.message, false);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("prev-month").addEventListener("click", () => {
+  state.month -= 1;
+  if (state.month < 1) { state.month = 12; state.year -= 1; }
+  loadCalendar();
+});
+document.getElementById("next-month").addEventListener("click", () => {
+  state.month += 1;
+  if (state.month > 12) { state.month = 1; state.year += 1; }
+  loadCalendar();
+});
+
+loadCalendar();
+</script>
+
+</body>
+</html>
