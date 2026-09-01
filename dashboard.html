@@ -71,15 +71,17 @@
   .uname { font-weight:500; color:#fff; }
 
   .ci-icons { display:inline-flex; gap:4px; align-items:center; }
-  .ci { display:inline-flex; width:21px; height:21px; border-radius:50%; align-items:center; justify-content:center; font-size:11px; }
+  .ci { display:inline-flex; width:21px; height:21px; border-radius:50%; align-items:center; justify-content:center; font-size:11px; border:none; padding:0; font-family:inherit; cursor:pointer; transition:all 0.15s ease; }
   .ci-green { background:#1a2e1f; color:#4ade80; }
+  .ci-green:hover { background:#8b5cf6; color:#fff; transform:scale(1.1); }
   .ci-red { background:#2e1420; color:#f87171; }
   .ci-gray { background:#241b38; color:#6b5f8a; }
   .ci-btn { width:21px; height:21px; border-radius:50%; padding:0; font-size:11px; background:#2d2145; color:#c4b5fd; border:none; cursor:pointer; transition:all 0.15s ease; display:inline-flex; align-items:center; justify-content:center; }
   .ci-btn:hover { background:#8b5cf6; color:#fff; transform:scale(1.1); }
-  .ci-wide { display:inline-flex; padding:2px 9px; border-radius:999px; font-size:10px; }
+  .ci-wide { display:inline-flex; padding:2px 9px; border-radius:999px; font-size:10px; border:none; font-family:inherit; }
   .ci-offshift { background:#241b38; color:#6b5f8a; }
-  .ci-holiday { background:#33280f; color:#fbbf24; }
+  .ci-holiday { background:#33280f; color:#fbbf24; cursor:pointer; transition:background 0.15s ease; }
+  .ci-holiday:hover { background:#493713; }
   .ci-time { font-size:9px; color:#4ade80; font-family:monospace; }
 
   .badge { display:inline-flex; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:500; }
@@ -211,8 +213,33 @@ async function manualCheckin(userId, round){
   }catch(e){ console.error("เช็คชื่อมือไม่สำเร็จ",e); }
 }
 
-function ciIconHtml(round, roundNum, userId){
-  if(round.status==="green") return `<span class="ci ci-green" title="รอบ ${roundNum}${round.time?' · '+round.time:''}"><i class="ti ti-check" aria-hidden="true"></i></span>`;
+async function undoCheckin(userId, round, username){
+  if(!checkinUnlocked){
+    alert("ต้องกดปลดล็อกเช็คชื่อ (ปุ่มบนหัวจอ) ก่อน ถึงจะยกเลิกเช็คชื่อได้ — กันเผลอกดพลาด");
+    return;
+  }
+  if(!confirm(`ยกเลิกเช็คชื่อรอบ ${round} ของ ${username}?`)) return;
+  try{
+    const res=await fetch("/api/manual-checkin",{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:userId,round:round,shift:null})});
+    if(!res.ok){
+      const err=await res.json().catch(()=>({}));
+      alert(err.error||"ยกเลิกเช็คชื่อไม่สำเร็จ");
+      return;
+    }
+    loadData();
+  }catch(e){ console.error("ยกเลิกเช็คชื่อไม่สำเร็จ",e); }
+}
+
+// event delegation (ผูกครั้งเดียวตอนโหลดหน้า) — เพราะตาราง re-render บ่อยจาก SSE ถ้าผูกใหม่ทุกครั้งจะรั่ว/ซ้ำ
+// ใช้ data-attribute แทนการยัด username ลง onclick ตรงๆ กัน username ที่มีเครื่องหมาย ' หลุดออกจาก JS string ได้ (stored XSS)
+document.getElementById("table-body").addEventListener("click",(e)=>{
+  const btn=e.target.closest("[data-undo]");
+  if(!btn) return;
+  undoCheckin(btn.dataset.userId, parseInt(btn.dataset.round,10), btn.dataset.username);
+});
+
+function ciIconHtml(round, roundNum, userId, username){
+  if(round.status==="green") return `<button class="ci ci-green" title="รอบ ${roundNum}${round.time?' · '+round.time:''} — กดเพื่อยกเลิก" data-undo data-user-id="${userId}" data-round="${roundNum}" data-username="${esc(username)}"><i class="ti ti-check" aria-hidden="true"></i></button>`;
   if(round.status==="red") return `<button class="ci-btn" title="กดเพื่อเช็คชื่อรอบ ${roundNum}" onclick="manualCheckin('${userId}',${roundNum})"><i class="ti ti-plus" aria-hidden="true"></i></button>`;
   return `<button class="ci-btn" style="background:#241b38;color:#6b5f8a;" title="ยังไม่ประกาศ — กดเพื่อเช็คชื่อรอบ ${roundNum}" onclick="manualCheckin('${userId}',${roundNum})">·</button>`;
 }
@@ -317,9 +344,9 @@ function renderToDOM(data){
       const isOff=p.checkin&&p.checkin.round1.status==="offshift";
       let ci;
       if(!p.checkin) ci="";
-      else if(isHoliday) ci=`<span class="ci-wide ci-holiday">วันหยุด</span>`;
+      else if(isHoliday) ci=`<button class="ci-wide ci-holiday" title="กดเพื่อเช็คชื่อรอบ 1" onclick="manualCheckin('${p.user_id}',1)">วันหยุด</button>`;
       else if(isOff) ci=`<span class="ci-wide ci-offshift">ไม่ใช่กะนี้</span>`;
-      else ci=`<span class="ci-icons">${ciIconHtml(p.checkin.round1,1,p.user_id)}${ciIconHtml(p.checkin.round2,2,p.user_id)}${ciIconHtml(p.checkin.round3,3,p.user_id)}</span>`;
+      else ci=`<span class="ci-icons">${ciIconHtml(p.checkin.round1,1,p.user_id,p.username)}${ciIconHtml(p.checkin.round2,2,p.user_id,p.username)}${ciIconHtml(p.checkin.round3,3,p.user_id,p.username)}</span>`;
       return {isOT, label, bcls, warn, timeHtml, ci, isBack};
     }
 

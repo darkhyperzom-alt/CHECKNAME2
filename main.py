@@ -753,6 +753,32 @@ def manual_checkin():
     return jsonify({"ok": True})
 
 
+@app.route("/api/manual-checkin", methods=["DELETE"])
+def undo_manual_checkin():
+    """ลบเช็คชื่อรอบนี้ทิ้ง (กดเช็คชื่อผิด/พลาด) — ลบเฉพาะแถวของรอบนั้นจริงๆ
+    ถ้ารอบหลังเช็คชื่อไว้แล้ว หน้าจอจะยังขึ้นเขียวต่อจากการไล่ย้อนรอบหลัง (ของปกติ ไม่ใช่บั๊ก)"""
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id") or "").strip()
+    round_num = data.get("round")
+    shift_override = data.get("shift")
+    if shift_override not in ("เช้า", "ดึก"):
+        shift_override = None
+
+    if not user_id or round_num not in (1, 2, 3):
+        return jsonify({"error": "ต้องระบุ user_id และ round (1, 2 หรือ 3)"}), 400
+
+    now = datetime.now(timezone.utc)
+    round1_label, round2_label, round3_label = get_current_shift_rounds(now, override=shift_override)
+    target_label = {1: round1_label, 2: round2_label, 3: round3_label}[round_num]
+
+    with db(commit=True) as cur:
+        cur.execute(
+            "DELETE FROM checkin_log WHERE user_id = %s AND round_label = %s",
+            (user_id, target_label),
+        )
+    return jsonify({"ok": True})
+
+
 @app.route("/api/status")
 def api_status():
     shift_override = request.args.get("shift")
