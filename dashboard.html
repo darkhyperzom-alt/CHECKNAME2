@@ -80,6 +80,7 @@
   .ci-btn:hover { background:#8b5cf6; color:#fff; transform:scale(1.1); }
   .ci-wide { display:inline-flex; padding:2px 9px; border-radius:999px; font-size:10px; border:none; font-family:inherit; }
   .ci-offshift { background:#241b38; color:#6b5f8a; }
+  .ci-dayoff { background:#33280f; color:#fbbf24; }
   .ci-holiday { background:#33280f; color:#fbbf24; cursor:pointer; transition:background 0.15s ease; }
   .ci-holiday:hover { background:#493713; }
   .ci-time { font-size:9px; color:#4ade80; font-family:monospace; }
@@ -308,7 +309,7 @@ function renderToDOM(data){
     // แท็บหมวดหมู่กรองทุกอย่างตั้งแต่ตรงนี้ — ตาราง, โซนเตือน, เสียงแจ้งเตือน ล้วนอยู่ในหมวดที่กำลังดูอยู่เท่านั้น
     const scoped=selectedCategory==="ทั้งหมด"?data.people:data.people.filter(p=>p.category===selectedCategory);
     const people=[...scoped].sort((a,b)=>{
-      const pr=p=>{ if(!p.checkin)return 0; if(p.checkin.round1.status==="offshift")return 2; if(p.checkin.round1.status==="holiday")return 1; return 0; };
+      const pr=p=>{ if(!p.checkin)return 0; if(p.checkin.round1.status==="offshift"||p.checkin.round1.status==="dayoff")return 2; if(p.checkin.round1.status==="holiday")return 1; return 0; };
       const pa=pr(a),pb=pr(b); if(pa!==pb) return pa-pb;
       const aa=a.status!=="กลับที่นั่ง",ba=b.status!=="กลับที่นั่ง";
       if(aa!==ba) return aa?-1:1;
@@ -343,9 +344,11 @@ function renderToDOM(data){
         :`<span class="tcell" data-countdown="${p.duration_seconds||0}">${fmtDur(dur)}</span>`;
       const isHoliday=p.checkin&&p.checkin.round1.status==="holiday";
       const isOff=p.checkin&&p.checkin.round1.status==="offshift";
+      const isDayOff=p.checkin&&p.checkin.round1.status==="dayoff";
       let ci;
       if(!p.checkin) ci="";
       else if(isHoliday) ci=`<button class="ci-wide ci-holiday" title="กดเพื่อเช็คชื่อรอบ 1" onclick="manualCheckin('${p.user_id}',1)">วันหยุด</button>`;
+      else if(isDayOff) ci=`<span class="ci-wide ci-dayoff">วันหยุดวันนี้</span>`;
       else if(isOff) ci=`<span class="ci-wide ci-offshift">ไม่ใช่กะนี้</span>`;
       else ci=`<span class="ci-icons">${ciIconHtml(p.checkin.round1,1,p.user_id,p.username)}${ciIconHtml(p.checkin.round2,2,p.user_id,p.username)}${ciIconHtml(p.checkin.round3,3,p.user_id,p.username)}</span>`;
       return {isOT, label, bcls, warn, timeHtml, ci, isBack};
@@ -377,7 +380,7 @@ function renderToDOM(data){
       if(r.isOT){ rowStyle=`background:#1a0f14;border-left:3px solid #f87171;`; }
       else if(isActive){ rowStyle=`background:#1a1330;border-left:3px solid ${actColor};`; }
       else { rowStyle=`border-left:3px solid transparent;`; }
-      if(p.checkin&&(p.checkin.round1.status==='offshift'||p.checkin.round1.status==='holiday')) rowStyle+="opacity:0.5;";
+      if(p.checkin&&(p.checkin.round1.status==='offshift'||p.checkin.round1.status==='holiday'||p.checkin.round1.status==='dayoff')) rowStyle+="opacity:0.5;";
       return `<tr style="${rowStyle}">
         <td><span class="uname">${esc(p.username)}</span></td>
         <td>${r.ci}</td>

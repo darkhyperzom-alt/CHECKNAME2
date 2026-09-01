@@ -54,6 +54,53 @@
   .status-msg.error { color: #e57373; }
   .status-msg.success { color: #4caf6e; }
 
+  .admin-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #15151a;
+    border: 1px solid #2a2a35;
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin: 16px 0;
+    font-size: 13px;
+  }
+  .admin-bar input {
+    background: #1a1a22;
+    border: 1px solid #2a2a35;
+    color: #e6e6e6;
+    padding: 7px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    width: 160px;
+  }
+  .admin-bar button {
+    background: #6366f1;
+    border: none;
+    color: #fff;
+    padding: 7px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .admin-bar button:hover { background: #5457e0; }
+  #admin-status.unlocked { color: #4caf6e; }
+  #admin-status.locked { color: #9a9aa8; }
+
+  .del-person-btn {
+    background: none;
+    border: none;
+    color: #6f6f7d;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 4px;
+    margin-right: 4px;
+    border-radius: 4px;
+  }
+  .del-person-btn:hover { color: #e57373; background: #241318; }
+
   .cat-section { margin: 24px 0 10px; }
   .cat-title { font-size: 14px; font-weight: 600; color: #c9c9d6; display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
   .cat-count { font-size: 11px; color: #6f6f7d; font-weight: 500; }
@@ -116,7 +163,13 @@
 <div class="content">
   <a href="/" class="back-link">← กลับหน้าแดชบอร์ด</a>
   <h1 style="margin-top:8px;">📅 ตารางกะรายเดือน</h1>
-  <p class="sub">คลิกที่ช่องวันเพื่อสลับ เช้า → ดึก → หยุด → ว่าง — ตารางนี้เป็นตารางอ้างอิง ยังไม่มีผลต่อการเช็คชื่อ/รอบอัตโนมัติ (กะปัจจุบันยังยึดจาก <a href="/shifts" style="color:#a094c0;">หน้าแก้ไขกะ</a> เหมือนเดิม)</p>
+  <p class="sub">คลิกที่ช่องวันเพื่อสลับ เช้า → ดึก → หยุด → ว่าง — ตารางนี้เป็นตัวกำหนดกะของแต่ละคนในแต่ละวันจริง (ระบบเช็คชื่อยึดจากตารางนี้ของ "วันนี้" โดยตรงแล้ว ไม่ใช้หน้าแก้ไขกะแบบเดิมอีกต่อไป)</p>
+
+  <div class="admin-bar" id="admin-bar">
+    <input type="password" id="admin-code-input" placeholder="รหัสแอดมิน">
+    <button id="admin-unlock-btn">ปลดล็อกแก้ไข</button>
+    <span id="admin-status" class="locked">🔒 ล็อกอยู่ — ดูได้อย่างเดียว ใส่รหัสเพื่อแก้ไข/ลบ</span>
+  </div>
 
   <div class="month-nav">
     <button id="prev-month" title="เดือนก่อนหน้า">‹</button>
@@ -151,6 +204,38 @@ const nowLocal = new Date();
 const state = { year: nowLocal.getFullYear(), month: nowLocal.getMonth() + 1 };
 const todayKey = { year: nowLocal.getFullYear(), month: nowLocal.getMonth() + 1, day: nowLocal.getDate() };
 
+let adminCode = sessionStorage.getItem("shiftAdminCode") || "";
+let unlocked = !!adminCode; // มองโลกในแง่ดีไว้ก่อน — เซิร์ฟเวอร์จะปฏิเสธเองถ้ารหัสผิดตอนแก้ไขจริง
+
+function updateAdminUI() {
+  const statusEl = document.getElementById("admin-status");
+  if (unlocked) {
+    statusEl.textContent = "🔓 ปลดล็อกแล้ว — แก้ไข/ลบได้";
+    statusEl.className = "unlocked";
+  } else {
+    statusEl.textContent = "🔒 ล็อกอยู่ — ดูได้อย่างเดียว ใส่รหัสเพื่อแก้ไข/ลบ";
+    statusEl.className = "locked";
+  }
+}
+
+function lockAgain(msg) {
+  unlocked = false;
+  adminCode = "";
+  sessionStorage.removeItem("shiftAdminCode");
+  updateAdminUI();
+  setMsg(msg || "รหัสแอดมินไม่ถูกต้อง", false);
+}
+
+document.getElementById("admin-unlock-btn").addEventListener("click", () => {
+  adminCode = document.getElementById("admin-code-input").value.trim();
+  if (!adminCode) { setMsg("กรุณาใส่รหัสแอดมิน", false); return; }
+  sessionStorage.setItem("shiftAdminCode", adminCode);
+  unlocked = true;
+  updateAdminUI();
+  setMsg("ปลดล็อกแล้ว ลองแก้ไขได้เลย", true);
+});
+updateAdminUI();
+
 function nextCode(code) {
   const idx = CYCLE.indexOf(code || null);
   return CYCLE[(idx + 1) % CYCLE.length];
@@ -173,7 +258,7 @@ function rowHtml(p, daysInMonth) {
   }
   return `
     <tr data-username="${esc(p.username)}">
-      <td class="name-col">${esc(p.username)}${shiftTag}</td>
+      <td class="name-col"><button type="button" class="del-person-btn" data-username="${esc(p.username)}" title="ลบชื่อนี้ออกจากตาราง">🗑</button>${esc(p.username)}${shiftTag}</td>
       ${cells}
       <td class="off-col">${offCount}</td>
     </tr>`;
@@ -221,8 +306,32 @@ async function loadCalendar() {
 }
 
 document.getElementById("sections").addEventListener("click", async (e) => {
+  const delBtn = e.target.closest(".del-person-btn");
+  if (delBtn) {
+    if (!unlocked) { setMsg("กรุณาใส่รหัสแอดมินก่อนแก้ไข/ลบ", false); return; }
+    const username = delBtn.dataset.username;
+    if (!confirm(`ลบ "${username}" ออกจากตารางกะทั้งหมดทุกเดือน (และออกจากระบบเลย)?`)) return;
+    delBtn.disabled = true;
+    try {
+      const res = await fetch(`/api/shift-calendar/${encodeURIComponent(username)}`, {
+        method: "DELETE",
+        headers: { "X-Admin-Code": adminCode },
+      });
+      if (res.status === 403) { lockAgain(); return; }
+      if (!res.ok) throw new Error("ลบไม่สำเร็จ");
+      setMsg(`ลบ ${username} แล้ว`, true);
+      loadCalendar();
+    } catch (err) {
+      setMsg("เกิดข้อผิดพลาด: " + err.message, false);
+    } finally {
+      delBtn.disabled = false;
+    }
+    return;
+  }
+
   const btn = e.target.closest(".cal-cell");
   if (!btn || btn.disabled) return;
+  if (!unlocked) { setMsg("กรุณาใส่รหัสแอดมินก่อนแก้ไข/ลบ", false); return; }
 
   const username = btn.dataset.username;
   const day = btn.dataset.day;
@@ -234,9 +343,10 @@ document.getElementById("sections").addEventListener("click", async (e) => {
   try {
     const res = await fetch("/api/shift-calendar", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Admin-Code": adminCode },
       body: JSON.stringify({ username, day: dateStr, code: next }),
     });
+    if (res.status === 403) { lockAgain(); return; }
     if (!res.ok) throw new Error("บันทึกไม่สำเร็จ");
 
     btn.dataset.code = next || "";

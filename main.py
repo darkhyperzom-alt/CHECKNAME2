@@ -38,6 +38,10 @@ ACTIVE_DAYS = int(os.environ.get("ACTIVE_DAYS", "14"))
 DASH_USER = os.environ.get("DASH_USER", "")
 DASH_PASS = os.environ.get("DASH_PASS", "")
 
+# รหัสแอดมินสำหรับแก้ไข/ลบข้อมูลในตารางกะรายเดือน (ดูตารางได้ปกติ แต่แก้ไขต้องใส่รหัสนี้)
+# ถ้าไม่ตั้งไว้ จะเปิดให้แก้ไขได้เลยเหมือนเดิม (เหมือนพฤติกรรม DASH_USER)
+SHIFT_ADMIN_CODE = os.environ.get("SHIFT_ADMIN_CODE", "")
+
 # เปิด CORS เฉพาะเมื่อระบุโดเมนไว้ (เว้นว่าง = ปิด ปลอดภัยกว่า)
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "")
 
@@ -142,6 +146,13 @@ def _require_auth():
         "ต้องล็อกอินก่อนใช้งาน", 401,
         {"WWW-Authenticate": 'Basic realm="dashboard"'},
     )
+
+
+def _admin_code_ok():
+    """เช็ครหัสแอดมินสำหรับแก้ไข/ลบตารางกะรายเดือน — ถ้าไม่ได้ตั้ง SHIFT_ADMIN_CODE ไว้ ถือว่าเปิดให้แก้ไขได้เลย"""
+    if not SHIFT_ADMIN_CODE:
+        return True
+    return request.headers.get("X-Admin-Code", "") == SHIFT_ADMIN_CODE
 
 
 # ===== ส่วนฐานข้อมูล (PostgreSQL) =====
@@ -257,6 +268,42 @@ def load_shift_map(force=False):
 def invalidate_shift_cache():
     with _shift_lock:
         _shift_cache["at"] = 0.0
+
+
+CALENDAR_CODE_TO_SHIFT = {"D": "เช้า", "N": "ดึก", "X": "หยุด"}
+
+_calendar_cache = {"data": {}, "at": 0.0, "day": None}
+_calendar_lock = threading.Lock()
+
+
+def load_today_shift_map(force=False):
+    """โหลดกะของ 'วันนี้' (เวลาไทย) จากตาราง shift_calendar — คืน {ชื่อ normalize แล้ว -> 'เช้า'/'ดึก'/'หยุด'}
+    ใช้แทน load_shift_map()/shift_assignments.shift ในการตัดสินกะของแต่ละคนแล้ว (ตามที่ตกลงให้ยึดตารางกะรายวันเป็นหลัก)
+    คนที่ไม่มีแถวของวันนี้ (เช่น ยังไม่ได้ import เดือนถัดไป) จะไม่อยู่ใน dict นี้ -> ถือว่า 'ไม่จำกัดกะ'
+    (พฤติกรรมเดิมตอนยังไม่ได้เลือกกะ กันคนหายไปจากทุกกะถ้าลืม import ตารางเดือนใหม่)"""
+    today_bkk = datetime.now(BANGKOK_TZ).date()
+    now_ts = time.time()
+    with _calendar_lock:
+        if not force and _calendar_cache["day"] == today_bkk and now_ts - _calendar_cache["at"] < SHIFT_CACHE_TTL:
+            return _calendar_cache["data"]
+    try:
+        with db() as cur:
+            cur.execute("SELECT username, code FROM shift_calendar WHERE day = %s", (today_bkk,))
+            result = {norm_name(r["username"]): CALENDAR_CODE_TO_SHIFT.get(r["code"], r["code"]) for r in cur.fetchall()}
+        with _calendar_lock:
+            _calendar_cache["data"] = result
+            _calendar_cache["at"] = now_ts
+            _calendar_cache["day"] = today_bkk
+        return result
+    except Exception as e:
+        print(f"โหลดตารางกะรายวันไม่สำเร็จ: {e}")
+        with _calendar_lock:
+            return _calendar_cache["data"]
+
+
+def invalidate_calendar_cache():
+    with _calendar_lock:
+        _calendar_cache["at"] = 0.0
 
 
 def ensure_shift_placeholder(username):
@@ -759,6 +806,9 @@ def get_shift_calendar():
 
 @app.route("/api/shift-calendar", methods=["POST"])
 def set_shift_calendar_day():
+    if not _admin_code_ok():
+        return jsonify({"error": "รหัสแอดมินไม่ถูกต้อง"}), 403
+
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
     day = (data.get("day") or "").strip()
@@ -786,6 +836,22 @@ def set_shift_calendar_day():
                 """,
                 (username, day, code),
             )
+    invalidate_calendar_cache()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/shift-calendar/<path:username>", methods=["DELETE"])
+def delete_shift_calendar_person(username):
+    """ลบคนนี้ออกจากตารางกะรายเดือนทั้งหมด (ทุกเดือน) และออกจาก shift_assignments (roster) ไปด้วย —
+    ถ้ากลับมากดสถานะใหม่ทาง Telegram จะขึ้นทะเบียนอัตโนมัติเป็น 'ยังไม่เลือกกะ' ใหม่ตามปกติ"""
+    if not _admin_code_ok():
+        return jsonify({"error": "รหัสแอดมินไม่ถูกต้อง"}), 403
+
+    with db(commit=True) as cur:
+        cur.execute("DELETE FROM shift_calendar WHERE username = %s", (username,))
+        cur.execute("DELETE FROM shift_assignments WHERE username = %s", (username,))
+    invalidate_shift_cache()
+    invalidate_calendar_cache()
     return jsonify({"ok": True})
 
 
@@ -1046,10 +1112,21 @@ def _build_status_payload(cur, shift_override=None):
         current_shift = shift_override
     else:
         current_shift = "เช้า" if (8, 5) <= (now_bkk.hour, now_bkk.minute) < (20, 5) else "ดึก"
-    shift_map = load_shift_map()
+    # กะของแต่ละคนยึดจากตารางกะรายวัน (shift_calendar) ของ "วันนี้" เป็นหลักแล้ว แทนค่ากะคงที่เดิม
+    # ใน shift_assignments — คนที่ไม่มีแถวของวันนี้ (ยังไม่ import เดือนนี้/คนใหม่) ถือว่าไม่จำกัดกะ
+    today_shift_map = load_today_shift_map()
 
     for p in people:
-        person_shift = shift_map.get(norm_name(p["username"]))
+        person_shift = today_shift_map.get(norm_name(p["username"]))
+
+        if person_shift == "หยุด":
+            # ตารางระบุว่าวันนี้เป็นวันหยุดของคนนี้ — ไม่ต้องเช็คชื่อ ไม่ใช่การพลาดรอบ
+            p["checkin"] = {
+                "round1": {"label": "วันหยุดวันนี้", "status": "dayoff", "time": None},
+                "round2": {"label": "วันหยุดวันนี้", "status": "dayoff", "time": None},
+                "round3": {"label": "วันหยุดวันนี้", "status": "dayoff", "time": None},
+            }
+            continue
 
         if person_shift and person_shift != current_shift:
             # คนนี้ไม่ได้อยู่กะนี้ ไม่ต้องไปเช็คว่าเช็คชื่อรอบของกะนี้หรือไม่ (ไม่ใช่ภาระของเขา)
