@@ -698,64 +698,9 @@ def serve_dashboard():
     return send_from_directory(BASE_DIR, "dashboard.html")
 
 
-@app.route("/shifts")
-def serve_shift_editor():
-    return send_from_directory(BASE_DIR, "shift_editor.html")
-
-
 @app.route("/shift-calendar")
 def serve_shift_calendar():
     return send_from_directory(BASE_DIR, "shift_calendar.html")
-
-
-@app.route("/api/shift-assignments", methods=["GET"])
-def get_shift_assignments():
-    active_since = datetime.now(timezone.utc) - timedelta(days=ACTIVE_DAYS)
-    with db() as cur:
-        cur.execute("SELECT username, shift FROM shift_assignments ORDER BY username")
-        assignments = [
-            {"username": r["username"], "shift": r["shift"], "category": get_category(r["username"])}
-            for r in cur.fetchall()
-        ]
-
-        # รายชื่อที่ระบบเห็นความเคลื่อนไหวล่าสุด มาเป็นตัวช่วยเลือก กันพิมพ์/อิโมจิไม่ตรง
-        cur.execute(
-            "SELECT DISTINCT username FROM current_status WHERE since >= %s ORDER BY username",
-            (active_since,),
-        )
-        known_usernames = [r["username"] for r in cur.fetchall()]
-
-    return jsonify({"assignments": assignments, "known_usernames": known_usernames, "categories": CATEGORIES})
-
-
-@app.route("/api/shift-assignments", methods=["POST"])
-def upsert_shift_assignment():
-    data = request.get_json(silent=True) or {}
-    username = (data.get("username") or "").strip()
-    shift = (data.get("shift") or "").strip()
-
-    if not username or shift not in ("เช้า", "ดึก"):
-        return jsonify({"error": "ต้องระบุ username และ shift เป็น 'เช้า' หรือ 'ดึก' เท่านั้น"}), 400
-
-    with db(commit=True) as cur:
-        cur.execute(
-            """
-            INSERT INTO shift_assignments (username, shift)
-            VALUES (%s, %s)
-            ON CONFLICT (username) DO UPDATE SET shift = EXCLUDED.shift
-            """,
-            (username, shift),
-        )
-    invalidate_shift_cache()
-    return jsonify({"ok": True})
-
-
-@app.route("/api/shift-assignments/<path:username>", methods=["DELETE"])
-def delete_shift_assignment(username):
-    with db(commit=True) as cur:
-        cur.execute("DELETE FROM shift_assignments WHERE username = %s", (username,))
-    invalidate_shift_cache()
-    return jsonify({"ok": True})
 
 
 @app.route("/api/shift-calendar", methods=["GET"])
