@@ -275,7 +275,9 @@ function renderToDOM(data){
       <div class="sum-card"><div class="label">ออกนอกที่นั่ง</div><div class="value">${data.summary.out_now}</div></div>
       ${Object.entries(data.summary.activity_counts_today).map(([a,c])=>`<div class="sum-card"><div class="label">${esc(a)}วันนี้</div><div class="value">${c} ครั้ง</div></div>`).join("")}`;
 
-    const people=[...data.people].sort((a,b)=>{
+    // แท็บหมวดหมู่กรองทุกอย่างตั้งแต่ตรงนี้ — ตาราง, โซนเตือน, เสียงแจ้งเตือน ล้วนอยู่ในหมวดที่กำลังดูอยู่เท่านั้น
+    const scoped=selectedCategory==="ทั้งหมด"?data.people:data.people.filter(p=>p.category===selectedCategory);
+    const people=[...scoped].sort((a,b)=>{
       const pr=p=>{ if(!p.checkin)return 0; if(p.checkin.round1.status==="offshift")return 2; if(p.checkin.round1.status==="holiday")return 1; return 0; };
       const pa=pr(a),pb=pr(b); if(pa!==pb) return pa-pb;
       const aa=a.status!=="กลับที่นั่ง",ba=b.status!=="กลับที่นั่ง";
@@ -337,10 +339,7 @@ function renderToDOM(data){
           </div>`; }).join("")}</div>`;
     } else az.innerHTML="";
 
-    // แท็บหมวดหมู่กรองเฉพาะตารางหลัก — โซนเตือน/เสียงแจ้งเตือนยังครอบคลุมทุกหมวดเสมอ กันพลาดคนล่วงเวลาข้ามหมวดที่ไม่ได้ดูอยู่
-    const visiblePeople=selectedCategory==="ทั้งหมด"?people:people.filter(p=>p.category===selectedCategory);
-
-    document.getElementById("table-body").innerHTML=visiblePeople.map((p,i)=>{
+    document.getElementById("table-body").innerHTML=people.map((p,i)=>{
       const r=rowData(p);
       const isActive=!r.isBack;
       const actColor=p.status==="ปวดหนัก"?"#f87171":p.status==="ปวดน้อย"?"#fbbf24":p.status==="กินข้าว"?"#fbbf24":"#8b5cf6";
