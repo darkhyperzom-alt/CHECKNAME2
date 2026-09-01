@@ -848,17 +848,30 @@ def _build_status_payload(cur, shift_override=None):
             "total_today_seconds": total_today_map.get(row["user_id"], 0),
         })
 
+    # นับแยกตามหมวดหมู่ (+ "ทั้งหมด" รวมทุกหมวด) เพื่อให้การ์ดสรุปตรงกับหมวดที่กำลังดูอยู่ ไม่ใช่ยอดรวมทุกหมวดตลอด
     cur.execute(
         """
-        SELECT activity, COUNT(*) as count FROM status_log
+        SELECT username, activity FROM status_log
         WHERE timestamp >= %s AND activity != 'กลับที่นั่ง'
-        """ + EXCLUDE_SQL + """
-        GROUP BY activity
-        """,
+        """ + EXCLUDE_SQL,
         (period_start,) + EXCLUDE_PARAMS,
     )
-    activity_counts = {r["activity"]: r["count"] for r in cur.fetchall()}
-    out_count = sum(1 for p in people if p["status"] != "กลับที่นั่ง")
+    summary_by_category = defaultdict(lambda: {"out_now": 0, "activity_counts_today": defaultdict(int)})
+    for r in cur.fetchall():
+        cat = get_category(r["username"])
+        summary_by_category[cat]["activity_counts_today"][r["activity"]] += 1
+        summary_by_category["ทั้งหมด"]["activity_counts_today"][r["activity"]] += 1
+
+    for p in people:
+        if p["status"] != "กลับที่นั่ง":
+            summary_by_category[p["category"]]["out_now"] += 1
+            summary_by_category["ทั้งหมด"]["out_now"] += 1
+
+    summary_by_category.setdefault("ทั้งหมด", {"out_now": 0, "activity_counts_today": {}})
+    summary_by_category = {
+        cat: {"out_now": s["out_now"], "activity_counts_today": dict(s["activity_counts_today"])}
+        for cat, s in summary_by_category.items()
+    }
 
     # ===== ข้อมูลเช็คชื่อ (รอบที่ 1 / รอบที่ 2 / รอบที่ 3 ของกะปัจจุบัน) =====
     round1_label, round2_label, round3_label = get_current_shift_rounds(now, override=shift_override)
@@ -945,7 +958,7 @@ def _build_status_payload(cur, shift_override=None):
 
     return {
         "people": people,
-        "summary": {"out_now": out_count, "activity_counts_today": activity_counts},
+        "summary_by_category": summary_by_category,
         "current_shift": current_shift,
         "is_override": shift_override is not None,
         "categories": CATEGORIES,

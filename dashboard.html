@@ -245,7 +245,7 @@ function renderCategoryTabs(data){
 // แต่รวมสถานะ "เกิน/ใกล้เกินเวลา" ไว้ด้วย เพราะเป็นค่าที่ต้องอัปเดต badge/กล่องเตือน/เสียงพูดทันทีที่เปลี่ยน
 // (เดิมไม่รวม ทำให้ค้างได้นานสุด 30 วิ ถึงจะขึ้นแดง/มีเสียงเตือน ทั้งที่ตัวเลขเวลาในตารางเกินไปแล้ว)
 function sigOf(d){
-  return JSON.stringify([d.current_shift, d.summary,
+  return JSON.stringify([d.current_shift, d.summary_by_category,
     d.people.map(p=>{
       const lim=OVERTIME_LIMITS[p.status];
       const isOT=p.status!=="กลับที่นั่ง"&&lim&&p.duration_seconds>lim;
@@ -271,9 +271,11 @@ function renderToDOM(data){
   try{
     renderCategoryTabs(data);
 
+    // การ์ดสรุปตรงกับหมวดที่กำลังเปิดดูอยู่ (เซิร์ฟเวอร์คำนวณแยกไว้ให้ทุกหมวดแล้ว รวมทั้งคำนวณ "ทั้งหมด" ไว้ให้ด้วย)
+    const summary=data.summary_by_category[selectedCategory]||{out_now:0,activity_counts_today:{}};
     document.getElementById("summary").innerHTML=`
-      <div class="sum-card"><div class="label">ออกนอกที่นั่ง</div><div class="value">${data.summary.out_now}</div></div>
-      ${Object.entries(data.summary.activity_counts_today).map(([a,c])=>`<div class="sum-card"><div class="label">${esc(a)}วันนี้</div><div class="value">${c} ครั้ง</div></div>`).join("")}`;
+      <div class="sum-card"><div class="label">ออกนอกที่นั่ง</div><div class="value">${summary.out_now}</div></div>
+      ${Object.entries(summary.activity_counts_today).map(([a,c])=>`<div class="sum-card"><div class="label">${esc(a)}วันนี้</div><div class="value">${c} ครั้ง</div></div>`).join("")}`;
 
     // แท็บหมวดหมู่กรองทุกอย่างตั้งแต่ตรงนี้ — ตาราง, โซนเตือน, เสียงแจ้งเตือน ล้วนอยู่ในหมวดที่กำลังดูอยู่เท่านั้น
     const scoped=selectedCategory==="ทั้งหมด"?data.people:data.people.filter(p=>p.category===selectedCategory);
