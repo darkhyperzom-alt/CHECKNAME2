@@ -106,11 +106,7 @@
       <span class="live" id="live-badge"><span class="dot"></span> เรียลไทม์</span>
     </div>
     <div class="header-right">
-      <div class="shift-seg" id="shift-seg">
-        <button class="shift-btn active" data-shift="auto">อัตโนมัติ</button>
-        <button class="shift-btn" data-shift="เช้า">เช้า</button>
-        <button class="shift-btn" data-shift="ดึก">ดึก</button>
-      </div>
+      <div class="shift-seg" id="category-seg"></div>
       <button class="edit-link" id="checkin-lock-btn" onclick="toggleCheckinLock()"></button>
       <a href="/shifts" class="edit-link"><i class="ti ti-settings" aria-hidden="true"></i> แก้กะ</a>
       <span class="updated" id="updated"></span>
@@ -151,7 +147,7 @@ for(let i=0;i<5;i++) setTimeout(spawnEmoji,i*400);
 
 const OVERTIME_LIMITS={"ปวดหนัก":20*60,"ปวดน้อย":6*60,"กินข้าว":30*60};
 const overtimeAlerted=new Set(), warningAlerted=new Set();
-let selectedShift="auto", latestData=null, dataReceivedAt=0, eventSource=null;
+let selectedCategory="ทั้งหมด", latestData=null, dataReceivedAt=0, eventSource=null;
 let lastSig=null, lastRenderAt=0;
 
 // ล็อกไว้เป็นค่าเริ่มต้นเสมอทุกครั้งที่เปิด/รีเฟรชหน้า กันเผลอกดปุ่ม + ตอนแค่ดูจอเฉยๆ
@@ -203,7 +199,7 @@ async function manualCheckin(userId, round){
     return;
   }
   try{
-    const res=await fetch("/api/manual-checkin",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:userId,round:round,shift:selectedShift==="auto"?null:selectedShift})});
+    const res=await fetch("/api/manual-checkin",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:userId,round:round,shift:null})});
     if(!res.ok){
       // เช่น กดข้ามลำดับ (รอบ 2/3 ก่อนรอบก่อนหน้าจะประกาศ) — เดิม fetch ไม่ throw ตอน backend ตอบ error
       // ทำให้กดแล้วเงียบ ไม่มีอะไรเกิดขึ้น ไม่รู้ว่าทำไมไม่ขึ้นเขียว
@@ -221,18 +217,29 @@ function ciIconHtml(round, roundNum, userId){
   return `<button class="ci-btn" style="background:#241b38;color:#6b5f8a;" title="ยังไม่ประกาศ — กดเพื่อเช็คชื่อรอบ ${roundNum}" onclick="manualCheckin('${userId}',${roundNum})">·</button>`;
 }
 
-function setupShiftSelector(){
-  document.querySelectorAll(".shift-btn").forEach(btn=>{
+// หมวดหมู่กรองคนแสดงผล — เป็นแค่ตัวกรองฝั่งจอ ไม่ต้องยิง request ใหม่ (ข้อมูลทุกหมวดมากับ payload เดียวกันอยู่แล้ว)
+let lastCatTabs=null;
+function renderCategoryTabs(data){
+  const hasOther=data.people.some(p=>p.category==="อื่นๆ");
+  const tabs=["ทั้งหมด",...(data.categories||[]),...(hasOther?["อื่นๆ"]:[])];
+  const key=tabs.join("|");
+  if(key===lastCatTabs){
+    // แค่อัปเดตปุ่มไหน active ไม่ต้องสร้าง DOM ใหม่ทั้งก้อน (กันโฟกัส/hover กระพริบ)
+    document.querySelectorAll("#category-seg .shift-btn").forEach(b=>b.classList.toggle("active",b.dataset.cat===selectedCategory));
+    return;
+  }
+  lastCatTabs=key;
+  document.getElementById("category-seg").innerHTML=tabs.map(t=>
+    `<button class="shift-btn${t===selectedCategory?" active":""}" data-cat="${esc(t)}">${esc(t)}</button>`
+  ).join("");
+  document.querySelectorAll("#category-seg .shift-btn").forEach(btn=>{
     btn.addEventListener("click",()=>{
-      selectedShift=btn.dataset.shift;
-      document.querySelectorAll(".shift-btn").forEach(b=>b.classList.toggle("active",b===btn));
-      // ปิดสตรีมของกะเก่าทันที ไม่งั้นระหว่างรอ loadData() โหลดเสร็จ ข้อความ SSE ของกะเก่าจะยังเด้งมาวาดทับ
-      if(eventSource){ eventSource.close(); eventSource=null; }
-      loadData().then(connectSSE);
+      selectedCategory=btn.dataset.cat;
+      document.querySelectorAll("#category-seg .shift-btn").forEach(b=>b.classList.toggle("active",b===btn));
+      if(latestData) renderToDOM(latestData);
     });
   });
 }
-setupShiftSelector();
 
 // ลายเซ็นของ "เนื้อหาจริง" ไม่รวมตัวเลขเวลาที่เดินอยู่ตลอด (นับใหม่ทุกวิจะกระพริบ)
 // แต่รวมสถานะ "เกิน/ใกล้เกินเวลา" ไว้ด้วย เพราะเป็นค่าที่ต้องอัปเดต badge/กล่องเตือน/เสียงพูดทันทีที่เปลี่ยน
@@ -262,8 +269,7 @@ function renderData(data){
 
 function renderToDOM(data){
   try{
-    const autoBtn=document.querySelector('.shift-btn[data-shift="auto"]');
-    if(autoBtn&&data.current_shift) autoBtn.textContent=selectedShift==="auto"?`อัตโนมัติ (${data.current_shift})`:"อัตโนมัติ";
+    renderCategoryTabs(data);
 
     document.getElementById("summary").innerHTML=`
       <div class="sum-card"><div class="label">ออกนอกที่นั่ง</div><div class="value">${data.summary.out_now}</div></div>
@@ -331,7 +337,10 @@ function renderToDOM(data){
           </div>`; }).join("")}</div>`;
     } else az.innerHTML="";
 
-    document.getElementById("table-body").innerHTML=people.map((p,i)=>{
+    // แท็บหมวดหมู่กรองเฉพาะตารางหลัก — โซนเตือน/เสียงแจ้งเตือนยังครอบคลุมทุกหมวดเสมอ กันพลาดคนล่วงเวลาข้ามหมวดที่ไม่ได้ดูอยู่
+    const visiblePeople=selectedCategory==="ทั้งหมด"?people:people.filter(p=>p.category===selectedCategory);
+
+    document.getElementById("table-body").innerHTML=visiblePeople.map((p,i)=>{
       const r=rowData(p);
       const isActive=!r.isBack;
       const actColor=p.status==="ปวดหนัก"?"#f87171":p.status==="ปวดน้อย"?"#fbbf24":p.status==="กินข้าว"?"#fbbf24":"#8b5cf6";
@@ -354,20 +363,15 @@ function renderToDOM(data){
 }
 
 async function loadData(){
-  const requestedShift=selectedShift;  // จำไว้ว่าตอนยิง request เลือกกะไหนอยู่
   try{
-    const url=requestedShift==="auto"?"/api/status":`/api/status?shift=${encodeURIComponent(requestedShift)}`;
-    const res=await fetch(url); const data=await res.json();
-    // ระหว่างรอ อาจมีการสลับกะไปแล้ว — ทิ้งผลลัพธ์เก่าที่มาถึงช้า ไม่ให้วาดทับกะที่เลือกอยู่ตอนนี้
-    if(requestedShift!==selectedShift) return;
+    const res=await fetch("/api/status"); const data=await res.json();
     latestData=data; renderData(data);
   }catch(e){ console.error("โหลดไม่สำเร็จ",e); }
 }
 
 function connectSSE(){
   if(eventSource) eventSource.close();
-  const url=selectedShift==="auto"?"/api/stream":`/api/stream?shift=${encodeURIComponent(selectedShift)}`;
-  eventSource=new EventSource(url);
+  eventSource=new EventSource("/api/stream");
   eventSource.onmessage=(e)=>{
     try{ latestData=JSON.parse(e.data); renderData(latestData);
       document.getElementById("live-badge").classList.remove("off");

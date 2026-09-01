@@ -50,6 +50,12 @@ SNAPSHOT_INTERVAL = float(os.environ.get("SNAPSHOT_INTERVAL", "2"))
 ACTIVITIES = [a.strip() for a in os.environ.get(
     "ACTIVITIES", "กินข้าว,ปวดหนัก,ปวดน้อย").split(",") if a.strip()]
 
+# หมวดหมู่พนักงานตามคำนำหน้า username — คำนำหน้าที่ลงท้าย 'OL' ถือเป็นหมวดเดียวกับตัวย่อที่ตัด 'OL' ออก
+# เช่น 'OD' และ 'ODOL' รวมเป็นหมวด 'OD', 'FT'/'FTOL' รวมเป็นหมวด 'FT'
+# ตั้ง env: CATEGORIES=OD,FT,AM (เพิ่มหมวดใหม่ได้โดยไม่ต้องแก้โค้ด)
+CATEGORIES = [c.strip().upper() for c in os.environ.get(
+    "CATEGORIES", "OD,FT,AM").split(",") if c.strip()]
+
 # ในกลุ่มเช็คชื่อ: ถ้าตั้งเป็น 1 จะนับเฉพาะข้อความที่แนบรูปเท่านั้น
 # (กันคนพิมพ์คุยเล่นในกลุ่มแล้วได้เช็คชื่อฟรี)
 CHECKIN_REQUIRE_PHOTO = os.environ.get("CHECKIN_REQUIRE_PHOTO", "").strip().lower() in ("1", "true", "yes")
@@ -208,6 +214,20 @@ def norm_name(name):
     return re.sub(r"\s+", " ", (name or "")).strip().lower()
 
 
+def get_category(username):
+    """แยกหมวดจากคำนำหน้า username — คำนำหน้าที่ลงท้าย 'OL' นับรวมกับตัวย่อที่ตัด 'OL' ออก
+    เช่น 'OD-x' และ 'ODOL-x' ทั้งคู่เป็นหมวด 'OD' — คืน 'อื่นๆ' ถ้าไม่ตรงกับ CATEGORIES ที่ตั้งไว้"""
+    m = re.match(r"^([A-Za-z]+)", username or "")
+    if not m:
+        return "อื่นๆ"
+    prefix = m.group(1).upper()
+    if prefix in CATEGORIES:
+        return prefix
+    if prefix.endswith("OL") and prefix[:-2] in CATEGORIES:
+        return prefix[:-2]
+    return "อื่นๆ"
+
+
 _shift_cache = {"data": {}, "at": 0.0, "loaded": False}
 _shift_lock = threading.Lock()
 
@@ -236,6 +256,20 @@ def load_shift_map(force=False):
 def invalidate_shift_cache():
     with _shift_lock:
         _shift_cache["at"] = 0.0
+
+
+def ensure_shift_placeholder(username):
+    """เห็นชื่อนี้ครั้งแรก (กดสถานะเข้ามา) ให้ขึ้นทะเบียนใน shift_assignments อัตโนมัติแบบ
+    'ยังไม่เลือกกะ' (shift=NULL) — กันไม่ต้องมานั่งไมเกรดเองทีหลัง แล้วให้ไปเลือกกะเอาเองที่หน้าแก้กะ"""
+    if norm_name(username) in load_shift_map():
+        return
+    with db(commit=True) as cur:
+        cur.execute(
+            "INSERT INTO shift_assignments (username, shift) VALUES (%s, NULL) "
+            "ON CONFLICT (username) DO NOTHING",
+            (username,),
+        )
+    invalidate_shift_cache()
 
 
 def init_db():
@@ -403,9 +437,6 @@ def parse_message(text):
     username = user_match.group(1).strip()
     user_id = userid_match.group(1).strip()
 
-    if "ODOL" not in username:
-        return None  # ไม่ใช่ ODOL ข้ามไปเลย
-
     if any(username.endswith(suf) for suf in EXCLUDED_SUFFIXES):
         return None  # ลงท้ายด้วย suffix ที่ไม่ใช่พนักงานของเรา ข้ามไปเลย
 
@@ -471,6 +502,7 @@ def save_status(data, when=None):
             """,
             (data["user_id"], data["username"], data["activity"], now),
         )
+    ensure_shift_placeholder(data["username"])
 
 
 CHAT_IDS = [group_id] + ([checkin_group_id] if checkin_group_id else [])
@@ -617,17 +649,19 @@ def get_shift_assignments():
     active_since = datetime.now(timezone.utc) - timedelta(days=ACTIVE_DAYS)
     with db() as cur:
         cur.execute("SELECT username, shift FROM shift_assignments ORDER BY username")
-        assignments = [{"username": r["username"], "shift": r["shift"]} for r in cur.fetchall()]
+        assignments = [
+            {"username": r["username"], "shift": r["shift"], "category": get_category(r["username"])}
+            for r in cur.fetchall()
+        ]
 
         # รายชื่อที่ระบบเห็นความเคลื่อนไหวล่าสุด มาเป็นตัวช่วยเลือก กันพิมพ์/อิโมจิไม่ตรง
         cur.execute(
-            "SELECT DISTINCT username FROM current_status "
-            "WHERE username LIKE %s AND since >= %s ORDER BY username",
-            ("%ODOL%", active_since),
+            "SELECT DISTINCT username FROM current_status WHERE since >= %s ORDER BY username",
+            (active_since,),
         )
         known_usernames = [r["username"] for r in cur.fetchall()]
 
-    return jsonify({"assignments": assignments, "known_usernames": known_usernames})
+    return jsonify({"assignments": assignments, "known_usernames": known_usernames, "categories": CATEGORIES})
 
 
 @app.route("/api/shift-assignments", methods=["POST"])
@@ -746,8 +780,8 @@ def _build_status_payload(cur, shift_override=None):
     # คนลาออกจะหลุดออกจากจอเองโดยไม่ต้องมาไล่ลบทีละคน
     cur.execute(
         "SELECT user_id, username, status, since FROM current_status "
-        "WHERE username LIKE %s AND since >= %s" + EXCLUDE_SQL,
-        ("%ODOL%", active_since) + EXCLUDE_PARAMS,
+        "WHERE since >= %s" + EXCLUDE_SQL,
+        (active_since,) + EXCLUDE_PARAMS,
     )
     rows = cur.fetchall()
 
@@ -755,11 +789,11 @@ def _build_status_payload(cur, shift_override=None):
     cur.execute(
         """
         SELECT user_id, activity, timestamp FROM status_log
-        WHERE timestamp >= %s AND username LIKE %s
+        WHERE timestamp >= %s
         """ + EXCLUDE_SQL + """
         ORDER BY user_id, timestamp ASC
         """,
-        (period_start, "%ODOL%") + EXCLUDE_PARAMS,
+        (period_start,) + EXCLUDE_PARAMS,
     )
     log_rows = cur.fetchall()
 
@@ -769,11 +803,11 @@ def _build_status_payload(cur, shift_override=None):
     cur.execute(
         """
         SELECT DISTINCT ON (user_id) user_id, activity FROM status_log
-        WHERE timestamp < %s AND username LIKE %s
+        WHERE timestamp < %s
         """ + EXCLUDE_SQL + """
         ORDER BY user_id, timestamp DESC
         """,
-        (period_start, "%ODOL%") + EXCLUDE_PARAMS,
+        (period_start,) + EXCLUDE_PARAMS,
     )
     carried_over = {r["user_id"] for r in cur.fetchall() if r["activity"] != "กลับที่นั่ง"}
 
@@ -807,6 +841,7 @@ def _build_status_payload(cur, shift_override=None):
         people.append({
             "user_id": row["user_id"],
             "username": row["username"],
+            "category": get_category(row["username"]),
             "status": row["status"],
             "since": since.isoformat(),
             "duration_seconds": duration_seconds,
@@ -816,11 +851,11 @@ def _build_status_payload(cur, shift_override=None):
     cur.execute(
         """
         SELECT activity, COUNT(*) as count FROM status_log
-        WHERE timestamp >= %s AND activity != 'กลับที่นั่ง' AND username LIKE %s
+        WHERE timestamp >= %s AND activity != 'กลับที่นั่ง'
         """ + EXCLUDE_SQL + """
         GROUP BY activity
         """,
-        (period_start, "%ODOL%") + EXCLUDE_PARAMS,
+        (period_start,) + EXCLUDE_PARAMS,
     )
     activity_counts = {r["activity"]: r["count"] for r in cur.fetchall()}
     out_count = sum(1 for p in people if p["status"] != "กลับที่นั่ง")
@@ -913,6 +948,7 @@ def _build_status_payload(cur, shift_override=None):
         "summary": {"out_now": out_count, "activity_counts_today": activity_counts},
         "current_shift": current_shift,
         "is_override": shift_override is not None,
+        "categories": CATEGORIES,
     }
 
 
