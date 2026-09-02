@@ -927,6 +927,39 @@ def api_activity_detail():
     return jsonify(result)
 
 
+@app.route("/api/tts-voices")
+def api_tts_voices():
+    """เครื่องมือช่วยหา voice_id ที่บัญชีนี้ใช้ผ่าน API ได้จริง (เสียง Library ต้องแพ็กเสียเท่านั้นถึงใช้ผ่าน API ได้)
+    ไม่โชว์ค่า ELEVENLABS_API_KEY ออกไปเลย เอาไว้เช็คชั่วคราวตอนตั้งค่าเสียง"""
+    if not _admin_code_ok():
+        return jsonify({"error": "รหัสแอดมินไม่ถูกต้อง"}), 403
+    if not ELEVENLABS_API_KEY:
+        return jsonify({"error": "ยังไม่ได้ตั้งค่า ELEVENLABS_API_KEY"}), 503
+
+    try:
+        resp = requests.get(
+            "https://api.elevenlabs.io/v2/voices",
+            headers={"xi-api-key": ELEVENLABS_API_KEY},
+            timeout=15,
+        )
+    except requests.RequestException as e:
+        return jsonify({"error": f"เรียก ElevenLabs ไม่สำเร็จ: {e}"}), 502
+
+    if not resp.ok:
+        return jsonify({"error": f"ElevenLabs ตอบผิดพลาด ({resp.status_code}): {resp.text[:300]}"}), 502
+
+    data = resp.json()
+    voices = [
+        {
+            "voice_id": v.get("voice_id"),
+            "name": v.get("name"),
+            "category": v.get("category"),
+        }
+        for v in data.get("voices", [])
+    ]
+    return jsonify({"voices": voices})
+
+
 @app.route("/api/tts")
 def api_tts():
     """เสียงเตือนเกินเวลา ผ่าน ElevenLabs — สร้างข้อความเองฝั่งเซิร์ฟเวอร์เสมอ (ไม่รับข้อความอิสระจาก
