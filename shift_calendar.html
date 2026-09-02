@@ -301,8 +301,21 @@ function dayCellHtml(username, dayNum, code) {
   return `<td class="day-col${todayCls}"><button type="button" class="${cls}" data-username="${esc(username)}" data-day="${dayNum}" data-code="${code || ""}">${code || ""}</button></td>`;
 }
 
+// ป้ายกะของคนนี้ยึดจากข้อมูลจริงในตารางเดือนที่กำลังดูอยู่ (D เยอะสุด = เช้า, N เยอะสุด = ดึก)
+// แทนค่า shift เดิมที่ตั้งไว้ตายตัวและอาจค้าง — คำนวณสดทุกครั้งจาก p.days เลยตามการแก้ล่าสุดเสมอ
+function dominantShift(p) {
+  const days = Object.values(p.days || {});
+  const d = days.filter(c => c === "D").length;
+  const n = days.filter(c => c === "N").length;
+  if (d === 0 && n === 0) return null;
+  if (d > n) return "เช้า";
+  if (n > d) return "ดึก";
+  return null; // เท่ากันเป๊ะ ยังสรุปกะไม่ได้
+}
+
 function rowHtml(p, daysInMonth) {
-  const shiftTag = p.shift ? `<span class="name-shift ${esc(p.shift)}">${esc(p.shift)}</span>` : "";
+  const shift = dominantShift(p);
+  const shiftTag = shift ? `<span class="name-shift ${esc(shift)}">${esc(shift)}</span>` : "";
   let cells = "";
   let offCount = 0, pnCount = 0;
   for (let d = 1; d <= daysInMonth; d++) {
@@ -380,9 +393,9 @@ function renderSiteOptions(data) {
 const SORTERS = {
   name: (x, y) => x.username.localeCompare(y.username),
   shift: (x, y) => {
-    const ax = x.shift === "เช้า" || x.shift === "ดึก", ay = y.shift === "เช้า" || y.shift === "ดึก";
-    if (ax !== ay) return ax ? -1 : 1; // ยังไม่เลือกกะ ไปท้ายสุดเสมอ
-    return (x.shift || "").localeCompare(y.shift || "") || x.username.localeCompare(y.username);
+    const sx = dominantShift(x), sy = dominantShift(y);
+    if (!!sx !== !!sy) return sx ? -1 : 1; // ยังสรุปกะไม่ได้ ไปท้ายสุดเสมอ
+    return (sx || "").localeCompare(sy || "") || x.username.localeCompare(y.username);
   },
   off: (x, y) => countCode(y, "X") - countCode(x, "X") || x.username.localeCompare(y.username),
   pn: (x, y) => countCode(y, "PN") - countCode(x, "PN") || x.username.localeCompare(y.username),
@@ -397,8 +410,8 @@ function renderSections(data) {
   let people = data.people;
   if (term) people = people.filter(p => p.username.toLowerCase().includes(term));
   if (selectedDept !== "ทั้งหมด") people = people.filter(p => p.category === selectedDept);
-  if (shiftFilter === "none") people = people.filter(p => p.shift !== "เช้า" && p.shift !== "ดึก");
-  else if (shiftFilter) people = people.filter(p => p.shift === shiftFilter);
+  if (shiftFilter === "none") people = people.filter(p => !dominantShift(p));
+  else if (shiftFilter) people = people.filter(p => dominantShift(p) === shiftFilter);
   if (siteFilter) people = people.filter(p => siteOf(p.username) === siteFilter);
 
   if (!people.length) {
