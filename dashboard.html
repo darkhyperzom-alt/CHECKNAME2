@@ -191,10 +191,10 @@ function toggleCheckinLock(){
 }
 renderCheckinLockUI();
 
-// เสียงเตือนเป็นเสียงไทยเดียวตลอดทั้งประโยค (เดิมแยกเสียงอังกฤษอ่านชื่อ + เสียงไทยอ่านคำเตือน
-// แต่เสียง 2 ตัวนี้เป็นคนละคน/โทนไม่เข้ากัน สลับเสียงกลางประโยคแล้วฟังดูแปลก) — สะกดคำนำหน้าเป็น
-// ชื่อตัวอักษรแบบไทย (ODOL -> "โอดีโอแอล") ให้เสียงไทยอ่านได้ลื่นแทนที่จะพยายามอ่านตัวอักษรอังกฤษปน
-let cachedThaiVoice=null;
+// เสียงเตือนแยก 2 ภาษา — ชื่อ (ODOL/AMOL/... + ชื่อเล่น) อ่านด้วยเสียงอังกฤษ เพราะชื่อคนมีเป็นร้อยคน
+// ทำตารางคำอ่านไทยให้ครบทุกคนไม่ไหว เสียงอังกฤษอ่านชื่อได้ถูกต้องเองโดยไม่ต้องเทียบเสียงทีละคน
+// ส่วนประโยคเตือนอ่านด้วยเสียงไทย ต่อกันเป็น utterance คนละตัว (คิวเล่นเรียงกันอัตโนมัติ)
+let cachedThaiVoice=null, cachedEnglishVoice=null;
 function pickVoiceByLang(prefix){
   const v=window.speechSynthesis.getVoices();
   if(!v||!v.length) return null;
@@ -204,6 +204,7 @@ function pickVoiceByLang(prefix){
 }
 function refreshCachedVoices(){
   cachedThaiVoice=pickVoiceByLang("th");
+  cachedEnglishVoice=pickVoiceByLang("en");
 }
 if(window.speechSynthesis){ refreshCachedVoices(); window.speechSynthesis.onvoiceschanged=refreshCachedVoices; }
 
@@ -212,42 +213,26 @@ function makeUtterance(text, voice, lang, rate){
   u.lang=lang;
   if(voice) u.voice=voice;
   u.rate=rate;
+  u.onerror=(e)=>console.error("พูดไม่สำเร็จ",e.error);
   return u;
 }
-
-const LETTER_TH={A:"เอ",B:"บี",C:"ซี",D:"ดี",E:"อี",F:"เอฟ",G:"จี",H:"เอช",I:"ไอ",J:"เจ",K:"เค",
-  L:"แอล",M:"เอ็ม",N:"เอ็น",O:"โอ",P:"พี",Q:"คิว",R:"อาร์",S:"เอส",T:"ที",U:"ยู",V:"วี",
-  W:"ดับเบิลยู",X:"เอ็กซ์",Y:"วาย",Z:"แซด"};
-function spellPrefixThai(s){
-  return String(s||"").toUpperCase().split("").filter(c=>LETTER_TH[c]).map(c=>LETTER_TH[c]).join("");
-}
-
-// คำอ่านชื่อแบบไทยของแต่ละคน (เสียงไทยอ่านชื่อภาษาอังกฤษตรงๆ มักสะกดทีละตัวอักษรแทนที่จะอ่านเป็นคำ)
-// เพิ่มชื่อใหม่ได้เรื่อยๆ ตามนี้ — ชื่อที่ยังไม่มีในนี้จะ fallback ไปสะกดทีละตัวแทน (อ่านไม่เพราะเท่าแต่ไม่มั่ว)
-const NAME_TH={
-  "CAPA":"แค้ปป้า",
-  "AHEYE":"อ๊ะอาย",
-};
-function nameToThai(name){
-  const key=String(name||"").trim().toUpperCase();
-  return NAME_TH[key]||spellPrefixThai(key);
-}
+// เว้นวรรคทุกตัวอักษร บังคับให้ TTS สะกดทีละตัว (O D O L) แทนที่จะพยายามอ่านเป็นคำ
+function spellOut(s){ return String(s||"").split("").join(" "); }
 
 function announceOvertimeFallback(username, activity, alreadyOver){
   try{
-    // เช็คเสียงไทยสดอีกทีตอนพูดจริง กันเคสหน้าเว็บโหลดเสร็จก่อนเบราว์เซอร์โหลดลิสต์เสียงเสร็จ
-    // (cachedThaiVoice ที่ตั้งไว้ตอนโหลดหน้าอาจยังเป็น null ค้างอยู่ถ้า onvoiceschanged ไม่ยิงซ้ำ)
-    const voice=pickVoiceByLang("th")||cachedThaiVoice;
+    // เช็คเสียงสดอีกทีตอนพูดจริง กันเคสหน้าเว็บโหลดเสร็จก่อนเบราว์เซอร์โหลดลิสต์เสียงเสร็จ
+    const enVoice=pickVoiceByLang("en")||cachedEnglishVoice;
+    const thVoice=pickVoiceByLang("th")||cachedThaiVoice;
     const parts=username.split("-");
-    const lead=`${spellPrefixThai(parts[0]||"")} ${nameToThai(parts[1]||"")}`.trim();
-    const text=alreadyOver
-      ? `${lead} เกินเวลาสำหรับ${activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด`
-      : `${lead} จะเกินเวลาสำหรับ${activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด`;
+    const englishText=`${spellOut(parts[0]||"")}, ${parts[1]||""}`;
+    const thaiText=alreadyOver
+      ? `เกินเวลาสำหรับ${activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด`
+      : `จะเกินเวลาสำหรับ${activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด`;
     window.speechSynthesis.cancel();
     setTimeout(()=>{
-      const u=makeUtterance(text, voice, "th-TH", 0.85);
-      u.onerror=(e)=>console.error("พูดไม่สำเร็จ",e.error);
-      window.speechSynthesis.speak(u);
+      window.speechSynthesis.speak(makeUtterance(englishText, enVoice, "en-US", 0.9));
+      window.speechSynthesis.speak(makeUtterance(thaiText, thVoice, "th-TH", 0.85));
     },80);
   }catch(e){ console.error("announceOvertimeFallback error",e); }
 }
