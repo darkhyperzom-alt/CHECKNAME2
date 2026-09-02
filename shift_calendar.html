@@ -137,6 +137,7 @@
   th.day-col.today, td.day-col.today { background: #1c1730; }
 
   td.off-col { padding: 8px 10px; color: #d1a94a; font-family: monospace; font-weight: 600; }
+  td.pn-col { padding: 8px 10px; color: #f0b429; font-family: monospace; font-weight: 600; }
 
   .cal-cell {
     width: 26px;
@@ -154,6 +155,7 @@
   .cal-cell.cal-D { background: #16331f; color: #4caf6e; }
   .cal-cell.cal-N { background: #1a1a3a; color: #8a8aff; }
   .cal-cell.cal-X { background: #3a1717; color: #e57373; }
+  .cal-cell.cal-PN { background: #3a2a10; color: #f0b429; }
 
   .empty-msg { padding: 20px; text-align: center; color: #6f6f7d; font-size: 13px; }
 </style>
@@ -163,7 +165,7 @@
 <div class="content">
   <a href="/" class="back-link">← กลับหน้าแดชบอร์ด</a>
   <h1 style="margin-top:8px;">📅 ตารางกะรายเดือน</h1>
-  <p class="sub">คลิกที่ช่องวันเพื่อสลับ เช้า → ดึก → หยุด → ว่าง — ตารางนี้เป็นตัวกำหนดกะของแต่ละคนในแต่ละวันจริง (ระบบเช็คชื่อยึดจากตารางนี้ของ "วันนี้" โดยตรงแล้ว ไม่ใช้หน้าแก้ไขกะแบบเดิมอีกต่อไป)</p>
+  <p class="sub">คลิกที่ช่องวันเพื่อสลับ เช้า → ดึก → หยุด → พักร้อน → ว่าง — ตารางนี้เป็นตัวกำหนดกะของแต่ละคนในแต่ละวันจริง (ระบบเช็คชื่อยึดจากตารางนี้ของ "วันนี้" โดยตรงแล้ว ไม่ใช้หน้าแก้ไขกะแบบเดิมอีกต่อไป)</p>
 
   <div class="admin-bar" id="admin-bar">
     <input type="password" id="admin-code-input" placeholder="รหัสแอดมิน">
@@ -179,6 +181,7 @@
       <div class="legend-item"><span class="legend-swatch" style="background:#16331f; color:#4caf6e;"></span> D = เช้า</div>
       <div class="legend-item"><span class="legend-swatch" style="background:#1a1a3a; color:#8a8aff;"></span> N = ดึก</div>
       <div class="legend-item"><span class="legend-swatch" style="background:#3a1717; color:#e57373;"></span> X = หยุด</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:#3a2a10; color:#f0b429;"></span> PN = พักร้อน</div>
     </div>
   </div>
 
@@ -198,7 +201,7 @@ function setMsg(text, ok){
 
 const MONTH_NAMES = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน",
                       "กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
-const CYCLE = [null, "D", "N", "X"];
+const CYCLE = [null, "D", "N", "X", "PN"];
 
 const nowLocal = new Date();
 const state = { year: nowLocal.getFullYear(), month: nowLocal.getMonth() + 1 };
@@ -250,10 +253,11 @@ function dayCellHtml(username, dayNum, code) {
 function rowHtml(p, daysInMonth) {
   const shiftTag = p.shift ? `<span class="name-shift ${esc(p.shift)}">${esc(p.shift)}</span>` : "";
   let cells = "";
-  let offCount = 0;
+  let offCount = 0, pnCount = 0;
   for (let d = 1; d <= daysInMonth; d++) {
     const code = p.days[d] || p.days[String(d)] || null;
     if (code === "X") offCount++;
+    else if (code === "PN") pnCount++;
     cells += dayCellHtml(p.username, d, code);
   }
   return `
@@ -261,6 +265,7 @@ function rowHtml(p, daysInMonth) {
       <td class="name-col"><button type="button" class="del-person-btn" data-username="${esc(p.username)}" title="ลบชื่อนี้ออกจากตาราง">🗑</button>${esc(p.username)}${shiftTag}</td>
       ${cells}
       <td class="off-col">${offCount}</td>
+      <td class="pn-col">${pnCount}</td>
     </tr>`;
 }
 
@@ -270,7 +275,7 @@ function headerRowHtml(daysInMonth) {
     const todayCls = (state.year === todayKey.year && state.month === todayKey.month && d === todayKey.day) ? " today" : "";
     cells += `<th class="day-col${todayCls}">${d}</th>`;
   }
-  return `<tr><th class="name-col">ชื่อ</th>${cells}<th class="off-col" style="text-align:center;">หยุด</th></tr>`;
+  return `<tr><th class="name-col">ชื่อ</th>${cells}<th class="off-col" style="text-align:center;">หยุด</th><th class="pn-col" style="text-align:center;">พักร้อน</th></tr>`;
 }
 
 async function loadCalendar() {
@@ -356,6 +361,8 @@ document.getElementById("sections").addEventListener("click", async (e) => {
     const row = btn.closest("tr");
     const offCell = row.querySelector(".off-col");
     if (offCell) offCell.textContent = row.querySelectorAll(".cal-X").length;
+    const pnCell = row.querySelector(".pn-col");
+    if (pnCell) pnCell.textContent = row.querySelectorAll(".cal-PN").length;
     setMsg("", true);
   } catch (err) {
     setMsg("เกิดข้อผิดพลาด: " + err.message, false);

@@ -270,7 +270,7 @@ def invalidate_shift_cache():
         _shift_cache["at"] = 0.0
 
 
-CALENDAR_CODE_TO_SHIFT = {"D": "เช้า", "N": "ดึก", "X": "หยุด"}
+CALENDAR_CODE_TO_SHIFT = {"D": "เช้า", "N": "ดึก", "X": "หยุด", "PN": "หยุด"}
 
 _calendar_cache = {"data": {}, "at": 0.0, "day": None}
 _calendar_lock = threading.Lock()
@@ -763,8 +763,8 @@ def set_shift_calendar_day():
 
     if not username or not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
         return jsonify({"error": "ต้องระบุ username และ day รูปแบบ YYYY-MM-DD"}), 400
-    if code is not None and code not in ("D", "N", "X"):
-        return jsonify({"error": "code ต้องเป็น 'D', 'N', 'X' หรือค่าว่าง (ล้างค่า)"}), 400
+    if code is not None and code not in ("D", "N", "X", "PN"):
+        return jsonify({"error": "code ต้องเป็น 'D', 'N', 'X', 'PN' หรือค่าว่าง (ล้างค่า)"}), 400
 
     with db(commit=True) as cur:
         if code is None:
