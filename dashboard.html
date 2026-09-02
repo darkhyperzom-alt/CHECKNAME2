@@ -222,13 +222,24 @@ function spellPrefixThai(s){
   return String(s||"").toUpperCase().split("").filter(c=>LETTER_TH[c]).map(c=>LETTER_TH[c]).join("");
 }
 
+// คำอ่านชื่อแบบไทยของแต่ละคน (เสียงไทยอ่านชื่อภาษาอังกฤษตรงๆ มักสะกดทีละตัวอักษรแทนที่จะอ่านเป็นคำ)
+// เพิ่มชื่อใหม่ได้เรื่อยๆ ตามนี้ — ชื่อที่ยังไม่มีในนี้จะ fallback ไปสะกดทีละตัวแทน (อ่านไม่เพราะเท่าแต่ไม่มั่ว)
+const NAME_TH={
+  "CAPA":"แค้ปป้า",
+  "AHEYE":"อ๊ะอาย",
+};
+function nameToThai(name){
+  const key=String(name||"").trim().toUpperCase();
+  return NAME_TH[key]||spellPrefixThai(key);
+}
+
 function announceOvertimeFallback(username, activity, alreadyOver){
   try{
     // เช็คเสียงไทยสดอีกทีตอนพูดจริง กันเคสหน้าเว็บโหลดเสร็จก่อนเบราว์เซอร์โหลดลิสต์เสียงเสร็จ
     // (cachedThaiVoice ที่ตั้งไว้ตอนโหลดหน้าอาจยังเป็น null ค้างอยู่ถ้า onvoiceschanged ไม่ยิงซ้ำ)
     const voice=pickVoiceByLang("th")||cachedThaiVoice;
     const parts=username.split("-");
-    const lead=`${spellPrefixThai(parts[0]||"")} ${parts[1]||""}`.trim();
+    const lead=`${spellPrefixThai(parts[0]||"")} ${nameToThai(parts[1]||"")}`.trim();
     const text=alreadyOver
       ? `${lead} เกินเวลาสำหรับ${activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด`
       : `${lead} จะเกินเวลาสำหรับ${activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด`;

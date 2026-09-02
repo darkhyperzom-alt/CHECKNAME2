@@ -109,6 +109,19 @@ LETTER_TH = {
 def spell_prefix_thai(prefix):
     return "".join(LETTER_TH.get(ch.upper(), "") for ch in (prefix or "") if ch.isalpha())
 
+
+# คำอ่านชื่อแบบไทยของแต่ละคน (เสียงไทยอ่านชื่อภาษาอังกฤษตรงๆ มักสะกดทีละตัวอักษรแทนที่จะอ่านเป็นคำ)
+# เพิ่มชื่อใหม่ได้เรื่อยๆ ตามนี้ — ชื่อที่ยังไม่มีในนี้จะ fallback ไปสะกดทีละตัวแทน (คู่กับ dashboard.html)
+NAME_TH = {
+    "CAPA": "แค้ปป้า",
+    "AHEYE": "อ๊ะอาย",
+}
+
+
+def name_to_thai(name):
+    key = (name or "").strip().upper()
+    return NAME_TH.get(key) or spell_prefix_thai(key)
+
 ROUND_LABELS = [
     "กะเช้า(08.00-20.00 น.) รอบที่ 1",
     "กะเช้า(08.00-20.00 น.) รอบที่ 2",
@@ -976,8 +989,8 @@ def api_tts():
 
     parts = username.split("-")
     prefix_th = spell_prefix_thai(parts[0] if parts else "")
-    name = parts[1].strip() if len(parts) > 1 else ""
-    lead = f"{prefix_th} {name}".strip()
+    name_th = name_to_thai(parts[1] if len(parts) > 1 else "")
+    lead = f"{prefix_th} {name_th}".strip()
 
     if already_over:
         text = f"{lead} เกินเวลาสำหรับ{activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด"
