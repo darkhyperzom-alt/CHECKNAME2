@@ -234,7 +234,7 @@ function announceOvertimeFallback(username, activity, alreadyOver){
       : `${lead} จะเกินเวลาสำหรับ${activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด`;
     window.speechSynthesis.cancel();
     setTimeout(()=>{
-      const u=makeUtterance(text, voice, "th-TH", 0.95);
+      const u=makeUtterance(text, voice, "th-TH", 0.85);
       u.onerror=(e)=>console.error("พูดไม่สำเร็จ",e.error);
       window.speechSynthesis.speak(u);
     },80);
