@@ -45,6 +45,17 @@
   }
   .month-nav button:hover { border-color: #6366f1; color: #c4b5fd; }
   .month-label { font-size: 15px; font-weight: 600; color: #fff; min-width: 150px; text-align: center; }
+  .search-input {
+    background: #15151a;
+    border: 1px solid #2a2a35;
+    color: #e6e6e6;
+    padding: 7px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    width: 200px;
+  }
+  .search-input:focus { outline: none; border-color: #6366f1; }
 
   .legend { display: flex; gap: 16px; align-items: center; font-size: 12px; color: #9a9aa8; margin-left: auto; }
   .legend-item { display: flex; align-items: center; gap: 5px; }
@@ -177,6 +188,7 @@
     <button id="prev-month" title="เดือนก่อนหน้า">‹</button>
     <span class="month-label" id="month-label"></span>
     <button id="next-month" title="เดือนถัดไป">›</button>
+    <input type="text" id="search-input" class="search-input" placeholder="ค้นหาชื่อ...">
     <div class="legend">
       <div class="legend-item"><span class="legend-swatch" style="background:#16331f; color:#4caf6e;"></span> D = เช้า</div>
       <div class="legend-item"><span class="legend-swatch" style="background:#1a1a3a; color:#8a8aff;"></span> N = ดึก</div>
@@ -278,21 +290,23 @@ function headerRowHtml(daysInMonth) {
   return `<tr><th class="name-col">ชื่อ</th>${cells}<th class="off-col" style="text-align:center;">หยุด</th><th class="pn-col" style="text-align:center;">พักร้อน</th></tr>`;
 }
 
-async function loadCalendar() {
-  document.getElementById("month-label").textContent = `${MONTH_NAMES[state.month - 1]} ${state.year}`;
+let latestCalendarData = null;
+let searchTerm = "";
 
-  const res = await fetch(`/api/shift-calendar?year=${state.year}&month=${state.month}`);
-  const data = await res.json();
+function renderSections(data) {
   const daysInMonth = data.days_in_month;
-
   const sections = document.getElementById("sections");
-  if (!data.people || data.people.length === 0) {
-    sections.innerHTML = `<div class="table-wrap"><div class="empty-msg">ยังไม่มีรายชื่อ — เพิ่มคนได้ที่หน้าแก้ไขกะก่อน</div></div>`;
+
+  const term = searchTerm.trim().toLowerCase();
+  const people = term ? data.people.filter(p => p.username.toLowerCase().includes(term)) : data.people;
+
+  if (!people.length) {
+    sections.innerHTML = `<div class="table-wrap"><div class="empty-msg">${term ? "ไม่พบชื่อที่ค้นหา" : "ยังไม่มีรายชื่อ — เพิ่มคนได้ตอนกดสถานะครั้งแรกทาง Telegram"}</div></div>`;
     return;
   }
 
   const byCat = {};
-  data.people.forEach(p => { (byCat[p.category] = byCat[p.category] || []).push(p); });
+  people.forEach(p => { (byCat[p.category] = byCat[p.category] || []).push(p); });
   const catOrder = [...(data.categories || []), "อื่นๆ"].filter(c => byCat[c] && byCat[c].length);
 
   sections.innerHTML = catOrder.map(cat => {
@@ -309,6 +323,23 @@ async function loadCalendar() {
       </div>`;
   }).join("");
 }
+
+async function loadCalendar() {
+  document.getElementById("month-label").textContent = `${MONTH_NAMES[state.month - 1]} ${state.year}`;
+
+  const res = await fetch(`/api/shift-calendar?year=${state.year}&month=${state.month}`);
+  latestCalendarData = await res.json();
+  renderSections(latestCalendarData);
+}
+
+let searchDebounce = null;
+document.getElementById("search-input").addEventListener("input", (e) => {
+  searchTerm = e.target.value;
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(() => {
+    if (latestCalendarData) renderSections(latestCalendarData);
+  }, 150);
+});
 
 document.getElementById("sections").addEventListener("click", async (e) => {
   const delBtn = e.target.closest(".del-person-btn");
