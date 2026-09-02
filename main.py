@@ -893,6 +893,91 @@ def api_status():
     return jsonify(build_status_payload(shift_override))
 
 
+@app.route("/api/activity-detail")
+def api_activity_detail():
+    """รายละเอียดรายคนของกิจกรรมหนึ่ง (กี่ครั้ง/รวมกี่วินาที) ในรอบกะปัจจุบัน — ใช้ตอนกดดูการ์ดสรุปด้านบน"""
+    activity = (request.args.get("activity") or "").strip()
+    category = (request.args.get("category") or "ทั้งหมด").strip() or "ทั้งหมด"
+    shift_override = request.args.get("shift")
+    if shift_override not in ("เช้า", "ดึก"):
+        shift_override = None
+    if not activity:
+        return jsonify({"error": "ต้องระบุ activity"}), 400
+
+    with db() as cur:
+        result = build_activity_detail(cur, activity, category, shift_override)
+    return jsonify(result)
+
+
+def build_activity_detail(cur, activity, category, shift_override=None):
+    now = datetime.now(timezone.utc)
+    period_start = get_period_start(now, override=shift_override)
+
+    cur.execute(
+        """
+        SELECT user_id, username, activity, timestamp FROM status_log
+        WHERE timestamp >= %s
+        """ + EXCLUDE_SQL + """
+        ORDER BY user_id, timestamp ASC
+        """,
+        (period_start,) + EXCLUDE_PARAMS,
+    )
+    log_rows = cur.fetchall()
+
+    # กิจกรรมที่เริ่มก่อนต้นรอบแต่ยังไม่กดกลับที่นั่ง (ออกอยู่ตั้งแต่ก่อนรอบนี้เริ่ม) — เหมือน _build_status_payload
+    cur.execute(
+        """
+        SELECT DISTINCT ON (user_id) user_id, username, activity FROM status_log
+        WHERE timestamp < %s
+        """ + EXCLUDE_SQL + """
+        ORDER BY user_id, timestamp DESC
+        """,
+        (period_start,) + EXCLUDE_PARAMS,
+    )
+    carried = {
+        r["user_id"]: (r["username"], r["activity"])
+        for r in cur.fetchall() if r["activity"] != "กลับที่นั่ง"
+    }
+
+    user_logs = defaultdict(list)
+    for r in log_rows:
+        user_logs[r["user_id"]].append(r)
+
+    stats = defaultdict(lambda: {"username": "", "count": 0, "total_seconds": 0})
+
+    for uid in set(user_logs) | set(carried):
+        log_list = user_logs.get(uid, [])
+        cur_username, cur_activity, open_since = None, None, None
+        if uid in carried:
+            cur_username, cur_activity = carried[uid]
+            open_since = period_start
+
+        for row in log_list:
+            if cur_activity == activity and open_since is not None:
+                stats[uid]["username"] = cur_username
+                stats[uid]["count"] += 1
+                stats[uid]["total_seconds"] += int((row["timestamp"] - open_since).total_seconds())
+            cur_username = row["username"]
+            if row["activity"] == "กลับที่นั่ง":
+                cur_activity, open_since = None, None
+            else:
+                cur_activity, open_since = row["activity"], row["timestamp"]
+
+        if cur_activity == activity and open_since is not None:
+            stats[uid]["username"] = cur_username
+            stats[uid]["count"] += 1
+            stats[uid]["total_seconds"] += int((now - open_since).total_seconds())
+
+    people = [
+        {"username": s["username"], "count": s["count"], "total_seconds": s["total_seconds"]}
+        for s in stats.values()
+        if category == "ทั้งหมด" or get_category(s["username"]) == category
+    ]
+    people.sort(key=lambda p: p["total_seconds"], reverse=True)
+
+    return {"activity": activity, "category": category, "people": people}
+
+
 def build_status_payload(shift_override=None, cur=None):
     """ถ้าส่ง cur เข้ามา จะใช้ connection เดิม (snapshot thread ใช้ตัวเดียวสร้างทั้ง 3 กะ)"""
     if cur is not None:

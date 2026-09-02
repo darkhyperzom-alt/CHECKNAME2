@@ -48,10 +48,21 @@
   body.checkin-locked .ci-btn { opacity:0.35; cursor:not-allowed; }
 
   .summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:11px; margin-bottom:20px; }
-  .sum-card { background:linear-gradient(145deg,#1e1533,#160f28); border:1px solid #2d2145; border-radius:13px; padding:14px 16px; transition:transform 0.2s ease, border-color 0.2s ease; }
+  .sum-card { background:linear-gradient(145deg,#1e1533,#160f28); border:1px solid #2d2145; border-radius:13px; padding:14px 16px; transition:transform 0.2s ease, border-color 0.2s ease; cursor:pointer; }
   .sum-card:hover { transform:translateY(-2px); border-color:#8b5cf6; }
   .sum-card .label { font-size:12px; color:#9d8fc4; margin-bottom:4px; }
   .sum-card .value { font-size:24px; font-weight:500; color:#fff; }
+
+  .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:50; padding:20px; }
+  .modal-backdrop[hidden] { display:none; }
+  .modal-box { background:#160f28; border:1px solid #2d2145; border-radius:14px; width:min(480px,100%); max-height:80vh; overflow:hidden; display:flex; flex-direction:column; }
+  .modal-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 18px; border-bottom:1px solid #241b38; font-size:14px; font-weight:600; color:#fff; }
+  .modal-close { background:none; border:none; color:#9d8fc4; font-size:15px; cursor:pointer; padding:4px 9px; border-radius:6px; }
+  .modal-close:hover { background:#241b38; color:#fff; }
+  .modal-body { overflow-y:auto; padding:4px 0; }
+  .modal-row { display:flex; align-items:center; gap:10px; padding:9px 18px; border-top:1px solid #1c1430; font-size:13px; }
+  .modal-row:first-child { border-top:none; }
+  .modal-empty { padding:26px 18px; text-align:center; color:#6b5f8a; font-size:13px; }
 
   .alert-box { background:#1a0f1a; border:1px solid #4a1e2a; border-radius:13px; overflow:hidden; margin-bottom:14px; animation:pulseRed 2.5s ease infinite; }
   .alert-head { background:#2e1420; color:#f87171; font-size:12px; font-weight:500; padding:8px 16px; display:flex; align-items:center; gap:6px; }
@@ -132,6 +143,16 @@
       </thead>
       <tbody id="table-body"></tbody>
     </table>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="detail-modal-backdrop" hidden>
+  <div class="modal-box">
+    <div class="modal-head">
+      <span id="detail-modal-title"></span>
+      <button class="modal-close" id="detail-modal-close" aria-label="ปิด">✕</button>
+    </div>
+    <div class="modal-body" id="detail-modal-body"></div>
   </div>
 </div>
 
@@ -239,6 +260,75 @@ document.getElementById("table-body").addEventListener("click",(e)=>{
   undoCheckin(btn.dataset.userId, parseInt(btn.dataset.round,10), btn.dataset.username);
 });
 
+// การ์ดสรุปด้านบน กดดูรายละเอียดรายคนได้ — "ออกนอกที่นั่ง" อ่านจากข้อมูลที่มีอยู่แล้ว (สด/ไม่ต้องยิง request)
+// ส่วนการ์ดกิจกรรม (ปวดหนัก/ปวดน้อย/กินข้าว ฯลฯ) ต้องยิง /api/activity-detail เพราะต้องรวมยอดครั้ง/เวลาย้อนทั้งรอบกะ
+let detailModalKind=null, detailRefreshTimer=null;
+
+function closeDetailModal(){
+  document.getElementById("detail-modal-backdrop").hidden=true;
+  detailModalKind=null;
+  if(detailRefreshTimer){ clearInterval(detailRefreshTimer); detailRefreshTimer=null; }
+}
+document.getElementById("detail-modal-close").addEventListener("click",closeDetailModal);
+document.getElementById("detail-modal-backdrop").addEventListener("click",(e)=>{
+  if(e.target.id==="detail-modal-backdrop") closeDetailModal();
+});
+
+function renderOutNowModal(){
+  if(!latestData) return;
+  const scoped=selectedCategory==="ทั้งหมด"?latestData.people:latestData.people.filter(p=>p.category===selectedCategory);
+  const outPeople=scoped.filter(p=>p.status!=="กลับที่นั่ง").sort((a,b)=>b.duration_seconds-a.duration_seconds);
+  document.getElementById("detail-modal-title").textContent=`ออกนอกที่นั่งตอนนี้ (${outPeople.length} คน)`;
+  const body=document.getElementById("detail-modal-body");
+  body.innerHTML=outPeople.length ? outPeople.map(p=>`
+    <div class="modal-row">
+      <span class="uname" style="flex:1;">${esc(p.username)}</span>
+      <span class="badge ${badgeClass(p.status)}">${esc(p.status)}</span>
+      <span class="tcell" data-countdown="${p.duration_seconds||0}" style="width:70px;text-align:right;">${fmtDur(p.duration_seconds||0)}</span>
+    </div>`).join("") : `<div class="modal-empty">ไม่มีใครออกนอกที่นั่งตอนนี้</div>`;
+}
+
+function openOutNowModal(){
+  if(!latestData) return;
+  detailModalKind="outnow";
+  document.getElementById("detail-modal-backdrop").hidden=false;
+  renderOutNowModal();
+}
+
+async function fetchAndRenderActivityModal(activity){
+  try{
+    const params=new URLSearchParams({activity, category:selectedCategory});
+    const res=await fetch(`/api/activity-detail?${params}`);
+    const data=await res.json();
+    const people=(data.people||[]);
+    document.getElementById("detail-modal-title").textContent=`${activity}วันนี้ — รายคน`;
+    const body=document.getElementById("detail-modal-body");
+    body.innerHTML=people.length ? people.map(p=>`
+      <div class="modal-row">
+        <span class="uname" style="flex:1;">${esc(p.username)}</span>
+        <span style="color:#9d8fc4;width:56px;text-align:right;">${p.count} ครั้ง</span>
+        <span class="tcell" style="width:70px;text-align:right;">${fmtDur(p.total_seconds)}</span>
+      </div>`).join("") : `<div class="modal-empty">ยังไม่มีใครกดวันนี้</div>`;
+  }catch(e){ console.error("โหลดรายละเอียดไม่สำเร็จ",e); }
+}
+
+function openActivityModal(activity){
+  detailModalKind="activity";
+  document.getElementById("detail-modal-backdrop").hidden=false;
+  document.getElementById("detail-modal-title").textContent=`${activity}วันนี้ — รายคน`;
+  document.getElementById("detail-modal-body").innerHTML=`<div class="modal-empty">กำลังโหลด...</div>`;
+  fetchAndRenderActivityModal(activity);
+  if(detailRefreshTimer) clearInterval(detailRefreshTimer);
+  detailRefreshTimer=setInterval(()=>fetchAndRenderActivityModal(activity),5000);
+}
+
+document.getElementById("summary").addEventListener("click",(e)=>{
+  const card=e.target.closest(".sum-card");
+  if(!card) return;
+  if(card.dataset.kind==="outnow") openOutNowModal();
+  else if(card.dataset.kind==="activity") openActivityModal(card.dataset.activity);
+});
+
 function ciIconHtml(round, roundNum, userId, username){
   if(round.status==="green") return `<button class="ci ci-green" title="รอบ ${roundNum}${round.time?' · '+round.time:''} — กดเพื่อยกเลิก" data-undo data-user-id="${userId}" data-round="${roundNum}" data-username="${esc(username)}"><i class="ti ti-check" aria-hidden="true"></i></button>`;
   if(round.status==="red") return `<button class="ci-btn" title="กดเพื่อเช็คชื่อรอบ ${roundNum}" onclick="manualCheckin('${userId}',${roundNum})"><i class="ti ti-plus" aria-hidden="true"></i></button>`;
@@ -302,8 +392,8 @@ function renderToDOM(data){
     // การ์ดสรุปตรงกับหมวดที่กำลังเปิดดูอยู่ (เซิร์ฟเวอร์คำนวณแยกไว้ให้ทุกหมวดแล้ว รวมทั้งคำนวณ "ทั้งหมด" ไว้ให้ด้วย)
     const summary=data.summary_by_category[selectedCategory]||{out_now:0,activity_counts_today:{}};
     document.getElementById("summary").innerHTML=`
-      <div class="sum-card"><div class="label">ออกนอกที่นั่ง</div><div class="value">${summary.out_now}</div></div>
-      ${Object.entries(summary.activity_counts_today).map(([a,c])=>`<div class="sum-card"><div class="label">${esc(a)}วันนี้</div><div class="value">${c} ครั้ง</div></div>`).join("")}`;
+      <div class="sum-card" data-kind="outnow"><div class="label">ออกนอกที่นั่ง</div><div class="value">${summary.out_now}</div></div>
+      ${Object.entries(summary.activity_counts_today).map(([a,c])=>`<div class="sum-card" data-kind="activity" data-activity="${esc(a)}"><div class="label">${esc(a)}วันนี้</div><div class="value">${c} ครั้ง</div></div>`).join("")}`;
 
     // แท็บหมวดหมู่กรองทุกอย่างตั้งแต่ตรงนี้ — ตาราง, โซนเตือน, เสียงแจ้งเตือน ล้วนอยู่ในหมวดที่กำลังดูอยู่เท่านั้น
     const scoped=selectedCategory==="ทั้งหมด"?data.people:data.people.filter(p=>p.category===selectedCategory);
@@ -390,6 +480,8 @@ function renderToDOM(data){
     }).join("");
 
     document.getElementById("updated").textContent="อัปเดต "+new Date().toLocaleTimeString("th-TH");
+
+    if(detailModalKind==="outnow") renderOutNowModal();
   }catch(e){ console.error("แสดงผลไม่สำเร็จ",e); }
 }
 
