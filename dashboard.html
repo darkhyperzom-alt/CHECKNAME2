@@ -190,24 +190,49 @@ function toggleCheckinLock(){
 }
 renderCheckinLockUI();
 
-let cachedThaiVoice=null;
-function pickThaiVoice(){
+// เสียงเตือนแยก 2 ภาษาในประโยคเดียว — ชื่อ (ODOL/AMOL/... + ชื่อเล่น) อ่านด้วยเสียง/สำเนียงอังกฤษ
+// ส่วนประโยคเตือนอ่านด้วยเสียงไทย ต่อกันเป็น utterance คนละตัว (คิวเล่นเรียงกันอัตโนมัติ)
+// เพราะเสียงไทยตัวเดียวพยายามอ่านคำอังกฤษปนแล้วออกเสียงไม่แน่นอน/ไม่คงที่ในแต่ละชื่อ
+let cachedThaiVoice=null, cachedEnglishVoice=null;
+function pickVoiceByLang(prefix){
   const v=window.speechSynthesis.getVoices();
   if(!v||!v.length) return null;
-  const th=v.filter(x=>x.lang&&x.lang.toLowerCase().startsWith("th"));
-  if(!th.length) return null;
-  return th.find(x=>x.name.toLowerCase().includes("google"))||th[0];
+  const matched=v.filter(x=>x.lang&&x.lang.toLowerCase().startsWith(prefix));
+  if(!matched.length) return null;
+  return matched.find(x=>x.name.toLowerCase().includes("google"))||matched[0];
 }
-if(window.speechSynthesis){ cachedThaiVoice=pickThaiVoice(); window.speechSynthesis.onvoiceschanged=()=>{cachedThaiVoice=pickThaiVoice();}; }
-function speakText(t){
-  try{ window.speechSynthesis.cancel();
-    const u=new SpeechSynthesisUtterance(t); u.lang="th-TH";
-    if(cachedThaiVoice) u.voice=cachedThaiVoice; u.rate=0.95;
-    setTimeout(()=>window.speechSynthesis.speak(u),80);
+function refreshCachedVoices(){
+  cachedThaiVoice=pickVoiceByLang("th");
+  cachedEnglishVoice=pickVoiceByLang("en");
+}
+if(window.speechSynthesis){ refreshCachedVoices(); window.speechSynthesis.onvoiceschanged=refreshCachedVoices; }
+
+function makeUtterance(text, voice, lang, rate){
+  const u=new SpeechSynthesisUtterance(text);
+  u.lang=lang;
+  if(voice) u.voice=voice;
+  u.rate=rate;
+  return u;
+}
+// เว้นวรรคทุกตัวอักษร บังคับให้ TTS สะกดทีละตัว (O D O L) แทนที่จะพยายามอ่านเป็นคำ
+function spellOut(s){ return String(s||"").split("").join(" "); }
+
+function announceOvertime(username, activity, alreadyOver){
+  try{
+    const parts=username.split("-");
+    const englishText=`${spellOut(parts[0]||"")}, ${parts[1]||""}`;
+    const thaiText=alreadyOver
+      ? `เกินเวลาสำหรับ${activity}นี้แล้ว กรุณากดกลับที่นั่งให้ไวที่สุดค่ะ`
+      : `จะเกินเวลาสำหรับ${activity}นี้แล้ว กรุณากดกลับที่นั่งให้ไวที่สุดค่ะ`;
+    window.speechSynthesis.cancel();
+    setTimeout(()=>{
+      window.speechSynthesis.speak(makeUtterance(englishText, cachedEnglishVoice, "en-US", 0.9));
+      window.speechSynthesis.speak(makeUtterance(thaiText, cachedThaiVoice, "th-TH", 0.95));
+    },80);
   }catch(e){}
 }
-function speakAlert(n,a){ speakText(`${n.split("-").slice(0,2).join(" ")} เกินเวลา${a}แล้ว รีบกลับที่นั่งให้ไว`); }
-function speakWarning(n,a){ speakText(`${n.split("-").slice(0,2).join(" ")} จะเกินเวลา${a}แล้ว ให้รีบกดกลับครับ`); }
+function speakAlert(n,a){ announceOvertime(n,a,true); }
+function speakWarning(n,a){ announceOvertime(n,a,false); }
 
 // กันชื่อผู้ใช้ที่มีอักขระ HTML (เช่น <img onerror=...>) รันสคริปต์บนหน้าเว็บ
 function esc(v){ return String(v==null?"":v).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
