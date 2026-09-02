@@ -224,6 +224,9 @@ function spellPrefixThai(s){
 
 function announceOvertimeFallback(username, activity, alreadyOver){
   try{
+    // เช็คเสียงไทยสดอีกทีตอนพูดจริง กันเคสหน้าเว็บโหลดเสร็จก่อนเบราว์เซอร์โหลดลิสต์เสียงเสร็จ
+    // (cachedThaiVoice ที่ตั้งไว้ตอนโหลดหน้าอาจยังเป็น null ค้างอยู่ถ้า onvoiceschanged ไม่ยิงซ้ำ)
+    const voice=pickVoiceByLang("th")||cachedThaiVoice;
     const parts=username.split("-");
     const lead=`${spellPrefixThai(parts[0]||"")} ${parts[1]||""}`.trim();
     const text=alreadyOver
@@ -231,9 +234,11 @@ function announceOvertimeFallback(username, activity, alreadyOver){
       : `${lead} จะเกินเวลาสำหรับ${activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด`;
     window.speechSynthesis.cancel();
     setTimeout(()=>{
-      window.speechSynthesis.speak(makeUtterance(text, cachedThaiVoice, "th-TH", 0.95));
+      const u=makeUtterance(text, voice, "th-TH", 0.95);
+      u.onerror=(e)=>console.error("พูดไม่สำเร็จ",e.error);
+      window.speechSynthesis.speak(u);
     },80);
-  }catch(e){}
+  }catch(e){ console.error("announceOvertimeFallback error",e); }
 }
 
 // เสียงเบราว์เซอร์เป็นหลักไปก่อน — ลอง ElevenLabs แล้วเสียง premade ที่ใช้ผ่าน API ได้ฟรีเป็นเสียงฝรั่งล้วน
