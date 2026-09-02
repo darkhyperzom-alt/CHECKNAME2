@@ -57,6 +57,25 @@
   }
   .search-input:focus { outline: none; border-color: #6366f1; }
 
+  .filter-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 18px; }
+  .dept-seg { display: flex; background: #15151a; border: 1px solid #2a2a35; border-radius: 999px; padding: 3px; }
+  .dept-btn { font-size: 12px; padding: 6px 14px; border-radius: 999px; color: #9a9aa8; cursor: pointer; border: none; background: transparent; font-family: inherit; transition: all 0.2s ease; }
+  .dept-btn.active { background: #6366f1; color: #fff; font-weight: 600; }
+  .dept-btn:hover:not(.active) { color: #c4b5fd; }
+  .filter-select {
+    background: #15151a;
+    border: 1px solid #2a2a35;
+    color: #e6e6e6;
+    padding: 7px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .filter-select:focus { outline: none; border-color: #6366f1; }
+  .filter-clear { font-size: 12px; color: #9a9aa8; background: none; border: none; cursor: pointer; padding: 6px 8px; }
+  .filter-clear:hover { color: #e57373; }
+
   .legend { display: flex; gap: 16px; align-items: center; font-size: 12px; color: #9a9aa8; margin-left: auto; }
   .legend-item { display: flex; align-items: center; gap: 5px; }
   .legend-swatch { width: 14px; height: 14px; border-radius: 4px; }
@@ -197,6 +216,26 @@
     </div>
   </div>
 
+  <div class="filter-bar">
+    <div class="dept-seg" id="dept-seg"></div>
+    <select id="shift-filter" class="filter-select">
+      <option value="">ทุกกะ</option>
+      <option value="เช้า">เช้า</option>
+      <option value="ดึก">ดึก</option>
+      <option value="none">ยังไม่เลือกกะ</option>
+    </select>
+    <select id="site-filter" class="filter-select">
+      <option value="">ทุกเว็บ</option>
+    </select>
+    <select id="sort-select" class="filter-select">
+      <option value="name">เรียงตามชื่อ</option>
+      <option value="shift">เรียงตามกะ</option>
+      <option value="off">วันหยุดมากสุดก่อน</option>
+      <option value="pn">พักร้อนมากสุดก่อน</option>
+    </select>
+    <button type="button" class="filter-clear" id="filter-clear">ล้างตัวกรอง</button>
+  </div>
+
   <div class="status-msg" id="status-msg"></div>
 
   <div id="sections"></div>
@@ -292,25 +331,90 @@ function headerRowHtml(daysInMonth) {
 
 let latestCalendarData = null;
 let searchTerm = "";
+let selectedDept = "ทั้งหมด";
+let shiftFilter = "";
+let siteFilter = "";
+let sortMode = "name";
+
+// เอา "เว็บ" มาจากท่อนที่ 3 ของ username (PREFIX-ชื่อ-เว็บ) เช่น "ODOL-AHEYE-711PG" -> "711PG"
+// บางคนพ่วงอิโมจิ/ข้อความต่อท้ายเว็บ (เช่น "HT99 🎲", "VG98 20:00-8:00") เอาแค่ตัวอักษร/ตัวเลขนำหน้าพอ
+function siteOf(username) {
+  const parts = String(username || "").split("-");
+  if (parts.length < 3) return "อื่นๆ";
+  const seg = parts.slice(2).join("-").trim();
+  const m = seg.match(/^[A-Za-z0-9]+/);
+  return m ? m[0].toUpperCase() : "อื่นๆ";
+}
+
+function countCode(p, code) {
+  return Object.values(p.days || {}).filter(c => c === code).length;
+}
+
+function renderDeptTabs(data) {
+  const hasOther = data.people.some(p => p.category === "อื่นๆ");
+  const tabs = ["ทั้งหมด", ...(data.categories || []), ...(hasOther ? ["อื่นๆ"] : [])];
+  // ถ้าหมวดที่เลือกไว้หายไปจากลิสต์ใหม่ (เช่น ลบคนสุดท้ายของหมวดนั้น) ต้องรีเซ็ต state ด้วย
+  // ไม่ใช่แค่ DOM ไม่งั้นตัวกรองจะยังกรองอยู่แบบไม่มีแท็บไหน active ให้เห็นเลย
+  if (selectedDept !== "ทั้งหมด" && !tabs.includes(selectedDept)) selectedDept = "ทั้งหมด";
+  document.getElementById("dept-seg").innerHTML = tabs.map(t =>
+    `<button type="button" class="dept-btn${t === selectedDept ? " active" : ""}" data-dept="${esc(t)}">${esc(t)}</button>`
+  ).join("");
+  document.querySelectorAll("#dept-seg .dept-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      selectedDept = btn.dataset.dept;
+      document.querySelectorAll("#dept-seg .dept-btn").forEach(b => b.classList.toggle("active", b === btn));
+      renderSections(latestCalendarData);
+    });
+  });
+}
+
+function renderSiteOptions(data) {
+  const sites = [...new Set(data.people.map(p => siteOf(p.username)))].sort();
+  // เหตุผลเดียวกับ renderDeptTabs — state ต้องเป็นตัวตั้ง ไม่ใช่ปล่อยให้ DOM รีเซ็ตเงียบๆ แล้ว state ค้าง
+  if (siteFilter && !sites.includes(siteFilter)) siteFilter = "";
+  const sel = document.getElementById("site-filter");
+  sel.innerHTML = `<option value="">ทุกเว็บ</option>` + sites.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join("");
+  sel.value = siteFilter;
+}
+
+const SORTERS = {
+  name: (x, y) => x.username.localeCompare(y.username),
+  shift: (x, y) => {
+    const ax = x.shift === "เช้า" || x.shift === "ดึก", ay = y.shift === "เช้า" || y.shift === "ดึก";
+    if (ax !== ay) return ax ? -1 : 1; // ยังไม่เลือกกะ ไปท้ายสุดเสมอ
+    return (x.shift || "").localeCompare(y.shift || "") || x.username.localeCompare(y.username);
+  },
+  off: (x, y) => countCode(y, "X") - countCode(x, "X") || x.username.localeCompare(y.username),
+  pn: (x, y) => countCode(y, "PN") - countCode(x, "PN") || x.username.localeCompare(y.username),
+};
 
 function renderSections(data) {
+  if (!data) return;
   const daysInMonth = data.days_in_month;
   const sections = document.getElementById("sections");
 
   const term = searchTerm.trim().toLowerCase();
-  const people = term ? data.people.filter(p => p.username.toLowerCase().includes(term)) : data.people;
+  let people = data.people;
+  if (term) people = people.filter(p => p.username.toLowerCase().includes(term));
+  if (selectedDept !== "ทั้งหมด") people = people.filter(p => p.category === selectedDept);
+  if (shiftFilter === "none") people = people.filter(p => p.shift !== "เช้า" && p.shift !== "ดึก");
+  else if (shiftFilter) people = people.filter(p => p.shift === shiftFilter);
+  if (siteFilter) people = people.filter(p => siteOf(p.username) === siteFilter);
 
   if (!people.length) {
-    sections.innerHTML = `<div class="table-wrap"><div class="empty-msg">${term ? "ไม่พบชื่อที่ค้นหา" : "ยังไม่มีรายชื่อ — เพิ่มคนได้ตอนกดสถานะครั้งแรกทาง Telegram"}</div></div>`;
+    const msg = (term || selectedDept !== "ทั้งหมด" || shiftFilter || siteFilter)
+      ? "ไม่พบรายชื่อที่ตรงกับตัวกรอง" : "ยังไม่มีรายชื่อ — เพิ่มคนได้ตอนกดสถานะครั้งแรกทาง Telegram";
+    sections.innerHTML = `<div class="table-wrap"><div class="empty-msg">${msg}</div></div>`;
     return;
   }
 
   const byCat = {};
   people.forEach(p => { (byCat[p.category] = byCat[p.category] || []).push(p); });
   const catOrder = [...(data.categories || []), "อื่นๆ"].filter(c => byCat[c] && byCat[c].length);
+  const cmp = SORTERS[sortMode] || SORTERS.name;
 
   sections.innerHTML = catOrder.map(cat => {
-    const rows = [...byCat[cat]].sort((x, y) => x.username.localeCompare(y.username));
+    const rows = [...byCat[cat]].sort(cmp);
     return `
       <div class="cat-section">
         <h2 class="cat-title">${esc(cat)} <span class="cat-count">${rows.length} คน</span></h2>
@@ -325,11 +429,21 @@ function renderSections(data) {
 }
 
 async function loadCalendar() {
-  document.getElementById("month-label").textContent = `${MONTH_NAMES[state.month - 1]} ${state.year}`;
-
-  const res = await fetch(`/api/shift-calendar?year=${state.year}&month=${state.month}`);
-  latestCalendarData = await res.json();
-  renderSections(latestCalendarData);
+  try {
+    const res = await fetch(`/api/shift-calendar?year=${state.year}&month=${state.month}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      setMsg(err.error || "โหลดตารางไม่สำเร็จ", false);
+      return;
+    }
+    latestCalendarData = await res.json();
+    document.getElementById("month-label").textContent = `${MONTH_NAMES[state.month - 1]} ${state.year}`;
+    renderDeptTabs(latestCalendarData);
+    renderSiteOptions(latestCalendarData);
+    renderSections(latestCalendarData);
+  } catch (err) {
+    setMsg("โหลดตารางไม่สำเร็จ: " + err.message, false);
+  }
 }
 
 let searchDebounce = null;
@@ -339,6 +453,27 @@ document.getElementById("search-input").addEventListener("input", (e) => {
   searchDebounce = setTimeout(() => {
     if (latestCalendarData) renderSections(latestCalendarData);
   }, 150);
+});
+
+document.getElementById("shift-filter").addEventListener("change", (e) => {
+  shiftFilter = e.target.value;
+  renderSections(latestCalendarData);
+});
+document.getElementById("site-filter").addEventListener("change", (e) => {
+  siteFilter = e.target.value;
+  renderSections(latestCalendarData);
+});
+document.getElementById("sort-select").addEventListener("change", (e) => {
+  sortMode = e.target.value;
+  renderSections(latestCalendarData);
+});
+document.getElementById("filter-clear").addEventListener("click", () => {
+  searchTerm = ""; selectedDept = "ทั้งหมด"; shiftFilter = ""; siteFilter = ""; sortMode = "name";
+  document.getElementById("search-input").value = "";
+  document.getElementById("shift-filter").value = "";
+  document.getElementById("site-filter").value = "";
+  document.getElementById("sort-select").value = "name";
+  if (latestCalendarData) { renderDeptTabs(latestCalendarData); renderSections(latestCalendarData); }
 });
 
 document.getElementById("sections").addEventListener("click", async (e) => {
@@ -388,6 +523,14 @@ document.getElementById("sections").addEventListener("click", async (e) => {
     btn.dataset.code = next || "";
     btn.textContent = next || "";
     btn.className = "cal-cell" + (next ? ` cal-${next}` : "");
+
+    // ต้องเขียนกลับเข้า latestCalendarData ด้วย ไม่ใช่แค่แก้ DOM — ไม่งั้นพอกดค้นหา/เปลี่ยนตัวกรอง/เรียงลำดับ
+    // ที (ซึ่ง render จาก latestCalendarData ตัวเดิมที่ยังไม่อัปเดต) ค่าที่เพิ่งแก้จะโดนวาดทับกลับเป็นค่าเก่า
+    const person = latestCalendarData && latestCalendarData.people.find(p => p.username === username);
+    if (person) {
+      if (next) person.days[day] = next;
+      else delete person.days[day];
+    }
 
     const row = btn.closest("tr");
     const offCell = row.querySelector(".off-col");
