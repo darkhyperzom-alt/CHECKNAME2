@@ -446,11 +446,13 @@ function renderToDOM(data){
       <div class="sum-card" data-kind="outnow"><div class="label">ออกนอกที่นั่ง</div><div class="value">${summary.out_now}</div></div>
       ${Object.entries(summary.activity_counts_today).map(([a,c])=>`<div class="sum-card" data-kind="activity" data-activity="${esc(a)}"><div class="label">${esc(a)}วันนี้</div><div class="value">${c} ครั้ง</div></div>`).join("")}`;
 
+    // 3 กลุ่มเรียงตามลำดับเสมอ ไม่ว่าจะดูหมวดไหน: 0=คนทำงาน (รวม holiday ที่ยังไม่เช็คชื่อ) 1=วันหยุด 2=ไม่ใช่กะนี้
+    const groupOf=p=>{ if(!p.checkin) return 0; const s=p.checkin.round1.status; if(s==="dayoff") return 1; if(s==="offshift") return 2; return 0; };
+
     // แท็บหมวดหมู่กรองทุกอย่างตั้งแต่ตรงนี้ — ตาราง, โซนเตือน, เสียงแจ้งเตือน ล้วนอยู่ในหมวดที่กำลังดูอยู่เท่านั้น
     const scoped=selectedCategory==="ทั้งหมด"?data.people:data.people.filter(p=>p.category===selectedCategory);
     const people=[...scoped].sort((a,b)=>{
-      const pr=p=>{ if(!p.checkin)return 0; if(p.checkin.round1.status==="offshift"||p.checkin.round1.status==="dayoff")return 2; if(p.checkin.round1.status==="holiday")return 1; return 0; };
-      const pa=pr(a),pb=pr(b); if(pa!==pb) return pa-pb;
+      const pa=groupOf(a),pb=groupOf(b); if(pa!==pb) return pa-pb;
       const aa=a.status!=="กลับที่นั่ง",ba=b.status!=="กลับที่นั่ง";
       if(aa!==ba) return aa?-1:1;
       if(!aa&&!ba) return a.duration_seconds-b.duration_seconds;
@@ -512,7 +514,7 @@ function renderToDOM(data){
           </div>`; }).join("")}</div>`;
     } else az.innerHTML="";
 
-    const isRestGroup=p=>!!(p.checkin&&(p.checkin.round1.status==='offshift'||p.checkin.round1.status==='dayoff'));
+    const GROUP_LABELS={1:"— วันหยุด —",2:"— ไม่ใช่กะนี้ —"};
     document.getElementById("table-body").innerHTML=people.map((p,i)=>{
       const r=rowData(p);
       const isActive=!r.isBack;
@@ -522,9 +524,10 @@ function renderToDOM(data){
       else if(isActive){ rowStyle=`background:#1a1330;border-left:3px solid ${actColor};`; }
       else { rowStyle=`border-left:3px solid transparent;`; }
       if(p.checkin&&(p.checkin.round1.status==='offshift'||p.checkin.round1.status==='holiday'||p.checkin.round1.status==='dayoff')) rowStyle+="opacity:0.5;";
-      // เส้นคั่นก่อนคนแรกของกลุ่ม "ไม่ใช่กะนี้/วันหยุดวันนี้" ให้เห็นชัดว่าแยกจากคนทำงานแล้ว (ทุกหมวดหมู่)
-      const divider=(isRestGroup(p)&&!(i>0&&isRestGroup(people[i-1])))
-        ? `<tr><td colspan="5" style="padding:7px 16px;font-size:11px;color:#6b5f8a;border-top:1px solid #241b38;background:#130d22;">— หยุด / ไม่ใช่กะนี้ —</td></tr>`
+      // เส้นคั่นก่อนคนแรกของแต่ละกลุ่ม (คนทำงาน / วันหยุด / ไม่ใช่กะนี้) ให้เห็นชัดว่าแยกกัน ทุกหมวดหมู่
+      const g=groupOf(p), prevG=i>0?groupOf(people[i-1]):-1;
+      const divider=(g!==prevG&&GROUP_LABELS[g])
+        ? `<tr><td colspan="5" style="padding:7px 16px;font-size:11px;color:#6b5f8a;border-top:1px solid #241b38;background:#130d22;">${GROUP_LABELS[g]}</td></tr>`
         : "";
       return divider+`<tr style="${rowStyle}">
         <td><span class="uname">${esc(p.username)}</span></td>
