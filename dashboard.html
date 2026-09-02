@@ -191,10 +191,10 @@ function toggleCheckinLock(){
 }
 renderCheckinLockUI();
 
-// เสียงเตือนแยก 2 ภาษาในประโยคเดียว — ชื่อ (ODOL/AMOL/... + ชื่อเล่น) อ่านด้วยเสียง/สำเนียงอังกฤษ
-// ส่วนประโยคเตือนอ่านด้วยเสียงไทย ต่อกันเป็น utterance คนละตัว (คิวเล่นเรียงกันอัตโนมัติ)
-// เพราะเสียงไทยตัวเดียวพยายามอ่านคำอังกฤษปนแล้วออกเสียงไม่แน่นอน/ไม่คงที่ในแต่ละชื่อ
-let cachedThaiVoice=null, cachedEnglishVoice=null;
+// เสียงเตือนเป็นเสียงไทยเดียวตลอดทั้งประโยค (เดิมแยกเสียงอังกฤษอ่านชื่อ + เสียงไทยอ่านคำเตือน
+// แต่เสียง 2 ตัวนี้เป็นคนละคน/โทนไม่เข้ากัน สลับเสียงกลางประโยคแล้วฟังดูแปลก) — สะกดคำนำหน้าเป็น
+// ชื่อตัวอักษรแบบไทย (ODOL -> "โอดีโอแอล") ให้เสียงไทยอ่านได้ลื่นแทนที่จะพยายามอ่านตัวอักษรอังกฤษปน
+let cachedThaiVoice=null;
 function pickVoiceByLang(prefix){
   const v=window.speechSynthesis.getVoices();
   if(!v||!v.length) return null;
@@ -204,7 +204,6 @@ function pickVoiceByLang(prefix){
 }
 function refreshCachedVoices(){
   cachedThaiVoice=pickVoiceByLang("th");
-  cachedEnglishVoice=pickVoiceByLang("en");
 }
 if(window.speechSynthesis){ refreshCachedVoices(); window.speechSynthesis.onvoiceschanged=refreshCachedVoices; }
 
@@ -215,20 +214,24 @@ function makeUtterance(text, voice, lang, rate){
   u.rate=rate;
   return u;
 }
-// เว้นวรรคทุกตัวอักษร บังคับให้ TTS สะกดทีละตัว (O D O L) แทนที่จะพยายามอ่านเป็นคำ
-function spellOut(s){ return String(s||"").split("").join(" "); }
+
+const LETTER_TH={A:"เอ",B:"บี",C:"ซี",D:"ดี",E:"อี",F:"เอฟ",G:"จี",H:"เอช",I:"ไอ",J:"เจ",K:"เค",
+  L:"แอล",M:"เอ็ม",N:"เอ็น",O:"โอ",P:"พี",Q:"คิว",R:"อาร์",S:"เอส",T:"ที",U:"ยู",V:"วี",
+  W:"ดับเบิลยู",X:"เอ็กซ์",Y:"วาย",Z:"แซด"};
+function spellPrefixThai(s){
+  return String(s||"").toUpperCase().split("").filter(c=>LETTER_TH[c]).map(c=>LETTER_TH[c]).join("");
+}
 
 function announceOvertimeFallback(username, activity, alreadyOver){
   try{
     const parts=username.split("-");
-    const englishText=`${spellOut(parts[0]||"")}, ${parts[1]||""}`;
-    const thaiText=alreadyOver
-      ? `เกินเวลาสำหรับ${activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด`
-      : `จะเกินเวลาสำหรับ${activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด`;
+    const lead=`${spellPrefixThai(parts[0]||"")} ${parts[1]||""}`.trim();
+    const text=alreadyOver
+      ? `${lead} เกินเวลาสำหรับ${activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด`
+      : `${lead} จะเกินเวลาสำหรับ${activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด`;
     window.speechSynthesis.cancel();
     setTimeout(()=>{
-      window.speechSynthesis.speak(makeUtterance(englishText, cachedEnglishVoice, "en-US", 0.9));
-      window.speechSynthesis.speak(makeUtterance(thaiText, cachedThaiVoice, "th-TH", 0.95));
+      window.speechSynthesis.speak(makeUtterance(text, cachedThaiVoice, "th-TH", 0.95));
     },80);
   }catch(e){}
 }
