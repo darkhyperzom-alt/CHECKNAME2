@@ -46,7 +46,7 @@ SHIFT_ADMIN_CODE = os.environ.get("SHIFT_ADMIN_CODE", "")
 # เสียงเตือนเกินเวลา (ElevenLabs Text-to-Speech) — ถ้าไม่ตั้ง ELEVENLABS_API_KEY ไว้
 # หน้าเว็บจะ fallback ไปใช้เสียงเบราว์เซอร์ (speechSynthesis) แทนเอง
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
-ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "Z3R5wn05IrDiVCyEkUrK")
+ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")  # Sarah (premade — ใช้ผ่าน API ได้บน free tier)
 
 # เปิด CORS เฉพาะเมื่อระบุโดเมนไว้ (เว้นว่าง = ปิด ปลอดภัยกว่า)
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "")
