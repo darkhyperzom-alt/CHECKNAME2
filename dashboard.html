@@ -217,7 +217,7 @@ function makeUtterance(text, voice, lang, rate){
 // เว้นวรรคทุกตัวอักษร บังคับให้ TTS สะกดทีละตัว (O D O L) แทนที่จะพยายามอ่านเป็นคำ
 function spellOut(s){ return String(s||"").split("").join(" "); }
 
-function announceOvertime(username, activity, alreadyOver){
+function announceOvertimeFallback(username, activity, alreadyOver){
   try{
     const parts=username.split("-");
     const englishText=`${spellOut(parts[0]||"")}, ${parts[1]||""}`;
@@ -230,6 +230,25 @@ function announceOvertime(username, activity, alreadyOver){
       window.speechSynthesis.speak(makeUtterance(thaiText, cachedThaiVoice, "th-TH", 0.95));
     },80);
   }catch(e){}
+}
+
+// เสียงหลัก: ยิงไปเสิร์ฟเวอร์ให้ ElevenLabs พูดให้ (คุณภาพ/ความคงที่ดีกว่าเสียงเบราว์เซอร์มาก)
+// ถ้าเซิร์ฟเวอร์ยังไม่ได้ตั้งค่า ElevenLabs หรือเรียกไม่สำเร็จ (โควตาหมด/เน็ตมีปัญหา ฯลฯ)
+// ค่อย fallback ไปใช้เสียงเบราว์เซอร์แทน กันเสียงเตือนเงียบหายไปเฉยๆ
+async function announceOvertime(username, activity, alreadyOver){
+  try{
+    const params=new URLSearchParams({ username, activity, already_over: alreadyOver ? "1" : "0" });
+    const res=await fetch(`/api/tts?${params}`);
+    if(!res.ok) throw new Error("tts endpoint failed");
+    const blob=await res.blob();
+    const url=URL.createObjectURL(blob);
+    const audio=new Audio(url);
+    audio.addEventListener("ended",()=>URL.revokeObjectURL(url));
+    await audio.play();
+  }catch(err){
+    console.error("ElevenLabs TTS ไม่สำเร็จ ใช้เสียงเบราว์เซอร์แทน",err);
+    announceOvertimeFallback(username, activity, alreadyOver);
+  }
 }
 function speakAlert(n,a){ announceOvertime(n,a,true); }
 function speakWarning(n,a){ announceOvertime(n,a,false); }

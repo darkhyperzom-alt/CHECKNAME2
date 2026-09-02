@@ -16,6 +16,7 @@ load_dotenv()  # โหลดค่าจากไฟล์ .env ถ้ามี
 import psycopg2
 import psycopg2.extras
 import psycopg2.pool
+import requests
 
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
@@ -41,6 +42,11 @@ DASH_PASS = os.environ.get("DASH_PASS", "")
 # รหัสแอดมินสำหรับแก้ไข/ลบข้อมูลในตารางกะรายเดือน (ดูตารางได้ปกติ แต่แก้ไขต้องใส่รหัสนี้)
 # ถ้าไม่ตั้งไว้ จะเปิดให้แก้ไขได้เลยเหมือนเดิม (เหมือนพฤติกรรม DASH_USER)
 SHIFT_ADMIN_CODE = os.environ.get("SHIFT_ADMIN_CODE", "")
+
+# เสียงเตือนเกินเวลา (ElevenLabs Text-to-Speech) — ถ้าไม่ตั้ง ELEVENLABS_API_KEY ไว้
+# หน้าเว็บจะ fallback ไปใช้เสียงเบราว์เซอร์ (speechSynthesis) แทนเอง
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
+ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "Z3R5wn05IrDiVCyEkUrK")
 
 # เปิด CORS เฉพาะเมื่อระบุโดเมนไว้ (เว้นว่าง = ปิด ปลอดภัยกว่า)
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "")
@@ -90,6 +96,18 @@ INSTRUCTION_HINTS = [
 
 # ตั้ง DEBUG_RAW=1 เพื่อให้ log ข้อความดิบของทุกกลุ่ม (ใช้ตอนหาสาเหตุ แล้วปิดกลับ)
 DEBUG_RAW = os.environ.get("DEBUG_RAW", "").strip().lower() not in ("", "0", "false", "no")
+
+# ชื่อเรียกตัวอักษรภาษาอังกฤษแบบไทย ใช้สะกดคำนำหน้า username (ODOL -> "โอดีโอแอล") ตอนพูดเสียงเตือน
+LETTER_TH = {
+    "A": "เอ", "B": "บี", "C": "ซี", "D": "ดี", "E": "อี", "F": "เอฟ", "G": "จี",
+    "H": "เอช", "I": "ไอ", "J": "เจ", "K": "เค", "L": "แอล", "M": "เอ็ม", "N": "เอ็น",
+    "O": "โอ", "P": "พี", "Q": "คิว", "R": "อาร์", "S": "เอส", "T": "ที", "U": "ยู",
+    "V": "วี", "W": "ดับเบิลยู", "X": "เอ็กซ์", "Y": "วาย", "Z": "แซด",
+}
+
+
+def spell_prefix_thai(prefix):
+    return "".join(LETTER_TH.get(ch.upper(), "") for ch in (prefix or "") if ch.isalpha())
 
 ROUND_LABELS = [
     "กะเช้า(08.00-20.00 น.) รอบที่ 1",
@@ -907,6 +925,46 @@ def api_activity_detail():
     with db() as cur:
         result = build_activity_detail(cur, activity, category, shift_override)
     return jsonify(result)
+
+
+@app.route("/api/tts")
+def api_tts():
+    """เสียงเตือนเกินเวลา ผ่าน ElevenLabs — สร้างข้อความเองฝั่งเซิร์ฟเวอร์เสมอ (ไม่รับข้อความอิสระจาก
+    ผู้ใช้) กัน endpoint นี้ถูกใช้ยิงข้อความอะไรก็ได้จนเปลือง credit ของ ElevenLabs"""
+    if not ELEVENLABS_API_KEY:
+        return jsonify({"error": "ยังไม่ได้ตั้งค่า ELEVENLABS_API_KEY"}), 503
+
+    username = (request.args.get("username") or "").strip()[:100]
+    activity = (request.args.get("activity") or "").strip()
+    already_over = request.args.get("already_over") == "1"
+
+    if not username or activity not in ACTIVITIES:
+        return jsonify({"error": "ต้องระบุ username และ activity ที่รู้จัก"}), 400
+
+    parts = username.split("-")
+    prefix_th = spell_prefix_thai(parts[0] if parts else "")
+    name = parts[1].strip() if len(parts) > 1 else ""
+    lead = f"{prefix_th} {name}".strip()
+
+    if already_over:
+        text = f"{lead} เกินเวลาสำหรับ{activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด"
+    else:
+        text = f"{lead} จะเกินเวลาสำหรับ{activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด"
+
+    try:
+        resp = requests.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
+            headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
+            json={"text": text, "model_id": "eleven_multilingual_v2"},
+            timeout=15,
+        )
+    except requests.RequestException as e:
+        return jsonify({"error": f"เรียก ElevenLabs ไม่สำเร็จ: {e}"}), 502
+
+    if not resp.ok:
+        return jsonify({"error": f"ElevenLabs ตอบผิดพลาด ({resp.status_code}): {resp.text[:200]}"}), 502
+
+    return Response(resp.content, mimetype="audio/mpeg")
 
 
 def build_activity_detail(cur, activity, category, shift_override=None):

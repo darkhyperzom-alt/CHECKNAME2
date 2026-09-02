@@ -3,6 +3,7 @@ telethon>=1.36,<2.0
 flask>=3.0,<4.0
 python-dotenv>=1.0,<2.0
 psycopg2-binary>=2.9,<3.0
+requests>=2.31,<3.0
 
 # ใช้เฉพาะเมื่อตั้งค่า CORS_ORIGINS ไว้เท่านั้น
 flask-cors>=4.0,<7.0
