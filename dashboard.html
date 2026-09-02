@@ -512,6 +512,7 @@ function renderToDOM(data){
           </div>`; }).join("")}</div>`;
     } else az.innerHTML="";
 
+    const isRestGroup=p=>!!(p.checkin&&(p.checkin.round1.status==='offshift'||p.checkin.round1.status==='dayoff'));
     document.getElementById("table-body").innerHTML=people.map((p,i)=>{
       const r=rowData(p);
       const isActive=!r.isBack;
@@ -521,7 +522,11 @@ function renderToDOM(data){
       else if(isActive){ rowStyle=`background:#1a1330;border-left:3px solid ${actColor};`; }
       else { rowStyle=`border-left:3px solid transparent;`; }
       if(p.checkin&&(p.checkin.round1.status==='offshift'||p.checkin.round1.status==='holiday'||p.checkin.round1.status==='dayoff')) rowStyle+="opacity:0.5;";
-      return `<tr style="${rowStyle}">
+      // เส้นคั่นก่อนคนแรกของกลุ่ม "ไม่ใช่กะนี้/วันหยุดวันนี้" ให้เห็นชัดว่าแยกจากคนทำงานแล้ว (ทุกหมวดหมู่)
+      const divider=(isRestGroup(p)&&!(i>0&&isRestGroup(people[i-1])))
+        ? `<tr><td colspan="5" style="padding:7px 16px;font-size:11px;color:#6b5f8a;border-top:1px solid #241b38;background:#130d22;">— หยุด / ไม่ใช่กะนี้ —</td></tr>`
+        : "";
+      return divider+`<tr style="${rowStyle}">
         <td><span class="uname">${esc(p.username)}</span></td>
         <td>${r.ci}</td>
         <td>${r.timeHtml}</td>
