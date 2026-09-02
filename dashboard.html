@@ -222,8 +222,8 @@ function announceOvertimeFallback(username, activity, alreadyOver){
     const parts=username.split("-");
     const englishText=`${spellOut(parts[0]||"")}, ${parts[1]||""}`;
     const thaiText=alreadyOver
-      ? `เกินเวลาสำหรับ${activity}นี้แล้ว กรุณากดกลับที่นั่งให้ไวที่สุดค่ะ`
-      : `จะเกินเวลาสำหรับ${activity}นี้แล้ว กรุณากดกลับที่นั่งให้ไวที่สุดค่ะ`;
+      ? `เกินเวลาสำหรับ${activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด`
+      : `จะเกินเวลาสำหรับ${activity}นี้แล้ว กรุณากลับที่นั่งโดยเร็วที่สุด`;
     window.speechSynthesis.cancel();
     setTimeout(()=>{
       window.speechSynthesis.speak(makeUtterance(englishText, cachedEnglishVoice, "en-US", 0.9));
@@ -232,10 +232,13 @@ function announceOvertimeFallback(username, activity, alreadyOver){
   }catch(e){}
 }
 
-// เสียงหลัก: ยิงไปเสิร์ฟเวอร์ให้ ElevenLabs พูดให้ (คุณภาพ/ความคงที่ดีกว่าเสียงเบราว์เซอร์มาก)
-// ถ้าเซิร์ฟเวอร์ยังไม่ได้ตั้งค่า ElevenLabs หรือเรียกไม่สำเร็จ (โควตาหมด/เน็ตมีปัญหา ฯลฯ)
-// ค่อย fallback ไปใช้เสียงเบราว์เซอร์แทน กันเสียงเตือนเงียบหายไปเฉยๆ
-async function announceOvertime(username, activity, alreadyOver){
+// เสียงเบราว์เซอร์เป็นหลักไปก่อน — ลอง ElevenLabs แล้วเสียง premade ที่ใช้ผ่าน API ได้ฟรีเป็นเสียงฝรั่งล้วน
+// พูดไทยไม่รู้เรื่องเลย (ส่วนเสียง Library ที่มีให้เลือกหลากหลาย/มีเสียงไทย ใช้ผ่าน API ไม่ได้ในแพ็กฟรี)
+// เก็บ announceOvertimeElevenLabs() ไว้เผื่ออนาคตอัปเกรดแพ็ก/เจอเสียงที่ใช้ได้ — ไม่ได้ถูกเรียกอัตโนมัติตอนนี้
+function announceOvertime(username, activity, alreadyOver){
+  announceOvertimeFallback(username, activity, alreadyOver);
+}
+async function announceOvertimeElevenLabs(username, activity, alreadyOver){
   try{
     const params=new URLSearchParams({ username, activity, already_over: alreadyOver ? "1" : "0" });
     const res=await fetch(`/api/tts?${params}`);
