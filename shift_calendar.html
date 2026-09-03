@@ -131,7 +131,7 @@
   }
   .del-person-btn:hover { color: #e57373; background: #241318; }
 
-  .stats-bar { display: flex; gap: 12px; margin: 16px 0 22px; flex-wrap: wrap; }
+  .stats-bar { display: flex; gap: 12px; margin: 16px 0; flex-wrap: wrap; }
   .stat-card {
     background: #15151a;
     border: 1px solid #2a2a35;
@@ -139,7 +139,13 @@
     padding: 14px 22px;
     min-width: 100px;
     text-align: center;
+    cursor: pointer;
+    font-family: inherit;
+    color: inherit;
+    transition: border-color 0.15s ease, background 0.15s ease;
   }
+  .stat-card:hover { border-color: #6366f1; }
+  .stat-card.active { border-color: #6366f1; background: #1a1a2e; }
   .stat-num { font-size: 22px; font-weight: 700; color: #fff; line-height: 1.2; }
   .stat-lbl { font-size: 11px; color: #9a9aa8; margin-top: 4px; }
   .stat-card.morning .stat-num { color: #4caf6e; }
@@ -148,6 +154,32 @@
   .stat-card.pn .stat-num { color: #f0b429; }
   .stat-card.total .stat-num { color: #6366f1; }
   .stat-note { font-size: 12px; color: #6f6f7d; padding: 10px 2px; }
+
+  .stats-detail-panel {
+    background: #15151a;
+    border: 1px solid #2a2a35;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin: 0 0 22px;
+  }
+  .stats-detail-head { font-size: 13px; font-weight: 600; color: #c9c9d6; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+  .today-names-count { font-size: 11px; color: #6f6f7d; font-weight: 500; }
+  .today-names-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 220px; overflow-y: auto; }
+  .today-names-list::-webkit-scrollbar { width: 8px; }
+  .today-names-list::-webkit-scrollbar-track { background: #15151a; }
+  .today-names-list::-webkit-scrollbar-thumb { background: #35354a; border-radius: 8px; }
+  .name-chip {
+    font-size: 11px;
+    background: #1a1a22;
+    border: 1px solid #2a2a35;
+    border-radius: 999px;
+    padding: 4px 10px;
+    color: #d6d6e0;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .name-chip:hover { border-color: #6366f1; color: #fff; }
+  .today-names-empty { font-size: 12px; color: #6f6f7d; }
 
   .cat-section { margin: 26px 0 10px; }
   .cat-title { font-size: 14px; font-weight: 600; color: #c9c9d6; display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding-bottom: 8px; border-bottom: 1px solid #21212a; }
@@ -251,6 +283,7 @@
   <p class="sub">คลิกที่ช่องวันเพื่อสลับ เช้า → ดึก → หยุด → พักร้อน → ว่าง — ตารางนี้เป็นตัวกำหนดกะของแต่ละคนในแต่ละวันจริง (ระบบเช็คชื่อยึดจากตารางนี้ของ "วันนี้" โดยตรงแล้ว ไม่ใช้หน้าแก้ไขกะแบบเดิมอีกต่อไป)</p>
 
   <div class="stats-bar" id="stats-bar"></div>
+  <div id="stats-detail"></div>
 
   <div class="admin-bar" id="admin-bar">
     <input type="password" id="admin-code-input" placeholder="รหัสแอดมิน">
@@ -479,35 +512,87 @@ function countCode(p, code) {
 }
 
 // สรุปยอดของ "วันนี้" จริง — ใช้ได้เฉพาะตอนกำลังดูเดือนปัจจุบันอยู่เท่านั้น เพราะ API ส่งมาแค่วันในเดือนที่กำลังดู
+// ช่วงเวลาของแต่ละกะจริง — เช้า 08:05-20:05, ดึก 20:05-08:05 — ใช้ตัดสินว่าตอนนี้ควรกางกลุ่มไหนไว้เป็นค่าเริ่มต้น
+function currentShiftWindow() {
+  const now = new Date();
+  const mins = now.getHours() * 60 + now.getMinutes();
+  const start = 8 * 60 + 5, end = 20 * 60 + 5;
+  return (mins >= start && mins < end) ? "เช้า" : "ดึก";
+}
+
 function computeTodayStats(data) {
   if (!data || state.year !== todayKey.year || state.month !== todayKey.month) return null;
   const day = todayKey.day;
-  const stats = { morning: 0, night: 0, off: 0, pn: 0, total: data.people.length };
+  const stats = {
+    morning: 0, night: 0, off: 0, pn: 0, total: data.people.length,
+    names: { morning: [], night: [], off: [], pn: [], total: [] },
+  };
   data.people.forEach(p => {
     const code = p.days[day] || p.days[String(day)] || null;
-    if (code === "D") stats.morning++;
-    else if (code === "N") stats.night++;
-    else if (code === "X") stats.off++;
-    else if (code === "PN") stats.pn++;
+    stats.names.total.push(p.username);
+    if (code === "D") { stats.morning++; stats.names.morning.push(p.username); }
+    else if (code === "N") { stats.night++; stats.names.night.push(p.username); }
+    else if (code === "X") { stats.off++; stats.names.off.push(p.username); }
+    else if (code === "PN") { stats.pn++; stats.names.pn.push(p.username); }
   });
+  Object.values(stats.names).forEach(arr => arr.sort((a, b) => a.localeCompare(b)));
   return stats;
 }
+
+const STAT_LABELS = { morning: "☀️ กะเช้าวันนี้", night: "🌙 กะดึกวันนี้", off: "หยุดวันนี้", pn: "พักร้อนวันนี้", total: "ทั้งหมด" };
+let latestTodayStats = null;
+let activeStatKey = null;
 
 function renderStatsBar(data) {
   const el = document.getElementById("stats-bar");
   const stats = computeTodayStats(data);
+  latestTodayStats = stats;
   if (!stats) {
     el.innerHTML = `<div class="stat-note">สรุปยอดวันนี้ดูได้เฉพาะตอนเปิดดูเดือนปัจจุบันเท่านั้น</div>`;
+    activeStatKey = null;
+    renderStatsDetail();
     return;
   }
-  el.innerHTML = `
-    <div class="stat-card morning"><div class="stat-num">${stats.morning}</div><div class="stat-lbl">☀️ กะเช้าวันนี้</div></div>
-    <div class="stat-card night"><div class="stat-num">${stats.night}</div><div class="stat-lbl">🌙 กะดึกวันนี้</div></div>
-    <div class="stat-card off"><div class="stat-num">${stats.off}</div><div class="stat-lbl">หยุดวันนี้</div></div>
-    <div class="stat-card pn"><div class="stat-num">${stats.pn}</div><div class="stat-lbl">พักร้อนวันนี้</div></div>
-    <div class="stat-card total"><div class="stat-num">${stats.total}</div><div class="stat-lbl">ทั้งหมด</div></div>
-  `;
+  el.innerHTML = ["morning", "night", "off", "pn", "total"].map(key =>
+    `<button type="button" class="stat-card ${key}${key === activeStatKey ? " active" : ""}" data-stat="${key}">
+       <div class="stat-num">${stats[key]}</div><div class="stat-lbl">${STAT_LABELS[key]}</div>
+     </button>`
+  ).join("");
+  renderStatsDetail();
 }
+
+// กดที่การ์ดสถิติแล้วดูรายชื่อย่อยได้เลยว่ามีใครบ้าง — คลิกซ้ำที่การ์ดเดิมเพื่อพับกลับ
+function renderStatsDetail() {
+  const el = document.getElementById("stats-detail");
+  if (!activeStatKey || !latestTodayStats) { el.innerHTML = ""; return; }
+  const names = latestTodayStats.names[activeStatKey] || [];
+  el.innerHTML = `
+    <div class="stats-detail-panel">
+      <div class="stats-detail-head">${STAT_LABELS[activeStatKey]} <span class="today-names-count">${names.length} คน</span></div>
+      ${names.length
+        ? `<div class="today-names-list">${names.map(n => `<span class="name-chip" data-jump="${esc(n)}">${esc(n)}</span>`).join("")}</div>`
+        : `<div class="today-names-empty">ไม่มี</div>`}
+    </div>`;
+}
+
+document.getElementById("stats-bar").addEventListener("click", (e) => {
+  const card = e.target.closest(".stat-card");
+  if (!card) return;
+  const key = card.dataset.stat;
+  activeStatKey = (activeStatKey === key) ? null : key;
+  document.querySelectorAll("#stats-bar .stat-card").forEach(c => c.classList.toggle("active", c.dataset.stat === activeStatKey));
+  renderStatsDetail();
+});
+
+document.getElementById("stats-detail").addEventListener("click", (e) => {
+  const chip = e.target.closest(".name-chip");
+  if (!chip) return;
+  const name = chip.dataset.jump;
+  searchTerm = name;
+  document.getElementById("search-input").value = name;
+  if (latestCalendarData) renderSections(latestCalendarData);
+  document.getElementById("sections").scrollIntoView({ behavior: "smooth", block: "start" });
+});
 
 function renderDeptTabs(data) {
   const hasOther = data.people.some(p => p.category === "อื่นๆ");
@@ -576,6 +661,10 @@ function renderSections(data) {
   const morningLabel = isCurrentMonth ? "☀️ กะเช้าวันนี้" : "☀️ กะเช้า";
   const nightLabel = isCurrentMonth ? "🌙 กะดึกวันนี้" : "🌙 กะดึก";
   const noneLabel = isCurrentMonth ? "❔ ไม่ได้ทำงานวันนี้ / ยังไม่ระบุกะ" : "❔ ยังไม่ระบุกะ";
+  // กะไหนกำลังทำงานอยู่ ณ ตอนนี้ (ตามเวลาเปิดหน้า) ให้กางไว้ อีกกะพับเก็บ — เฉพาะตอนดูเดือนปัจจุบันเท่านั้น
+  const nowShift = currentShiftWindow();
+  const morningOpen = !isCurrentMonth || nowShift === "เช้า";
+  const nightOpen = !isCurrentMonth || nowShift === "ดึก";
 
   sections.innerHTML = catOrder.map(cat => {
     const rows = [...byCat[cat]].sort(cmp);
@@ -585,8 +674,8 @@ function renderSections(data) {
     return `
       <div class="cat-section">
         <h2 class="cat-title">${esc(cat)} <span class="cat-count">${rows.length} คน</span></h2>
-        ${shiftGroupHtml(morningLabel, morningRows, daysInMonth, true)}
-        ${shiftGroupHtml(nightLabel, nightRows, daysInMonth, true)}
+        ${shiftGroupHtml(morningLabel, morningRows, daysInMonth, morningOpen)}
+        ${shiftGroupHtml(nightLabel, nightRows, daysInMonth, nightOpen)}
         ${shiftGroupHtml(noneLabel, noneRows, daysInMonth, false)}
       </div>`;
   }).join("");
