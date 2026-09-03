@@ -163,6 +163,8 @@
     margin: 0 0 22px;
   }
   .stats-detail-head { font-size: 13px; font-weight: 600; color: #c9c9d6; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+  .stats-detail-group { margin: 12px 0 0; }
+  .stats-detail-group-head { font-size: 12px; font-weight: 600; color: #9a9aa8; margin: 0 0 6px; display: flex; align-items: center; gap: 6px; }
   .today-names-count { font-size: 11px; color: #6f6f7d; font-weight: 500; }
   .today-names-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 220px; overflow-y: auto; }
   .today-names-list::-webkit-scrollbar { width: 8px; }
@@ -526,16 +528,18 @@ function computeTodayStats(data) {
   const stats = {
     morning: 0, night: 0, off: 0, pn: 0, total: data.people.length,
     names: { morning: [], night: [], off: [], pn: [], total: [] },
+    categoryOrder: [...(data.categories || []), "อื่นๆ"],
   };
   data.people.forEach(p => {
     const code = p.days[day] || p.days[String(day)] || null;
-    stats.names.total.push(p.username);
-    if (code === "D") { stats.morning++; stats.names.morning.push(p.username); }
-    else if (code === "N") { stats.night++; stats.names.night.push(p.username); }
-    else if (code === "X") { stats.off++; stats.names.off.push(p.username); }
-    else if (code === "PN") { stats.pn++; stats.names.pn.push(p.username); }
+    const entry = { username: p.username, category: p.category };
+    stats.names.total.push(entry);
+    if (code === "D") { stats.morning++; stats.names.morning.push(entry); }
+    else if (code === "N") { stats.night++; stats.names.night.push(entry); }
+    else if (code === "X") { stats.off++; stats.names.off.push(entry); }
+    else if (code === "PN") { stats.pn++; stats.names.pn.push(entry); }
   });
-  Object.values(stats.names).forEach(arr => arr.sort((a, b) => a.localeCompare(b)));
+  Object.values(stats.names).forEach(arr => arr.sort((a, b) => a.username.localeCompare(b.username)));
   return stats;
 }
 
@@ -561,17 +565,32 @@ function renderStatsBar(data) {
   renderStatsDetail();
 }
 
-// กดที่การ์ดสถิติแล้วดูรายชื่อย่อยได้เลยว่ามีใครบ้าง — คลิกซ้ำที่การ์ดเดิมเพื่อพับกลับ
+// กดที่การ์ดสถิติแล้วดูรายชื่อย่อยได้เลยว่ามีใครบ้าง — คลิกซ้ำที่การ์ดเดิมเพื่อพับกลับ แยกเป็นแผนกให้ในตัว
 function renderStatsDetail() {
   const el = document.getElementById("stats-detail");
   if (!activeStatKey || !latestTodayStats) { el.innerHTML = ""; return; }
-  const names = latestTodayStats.names[activeStatKey] || [];
+  const stats = latestTodayStats;
+  const entries = stats.names[activeStatKey] || [];
+  if (!entries.length) {
+    el.innerHTML = `
+      <div class="stats-detail-panel">
+        <div class="stats-detail-head">${STAT_LABELS[activeStatKey]} <span class="today-names-count">0 คน</span></div>
+        <div class="today-names-empty">ไม่มี</div>
+      </div>`;
+    return;
+  }
+  const byCat = {};
+  entries.forEach(e => { (byCat[e.category] = byCat[e.category] || []).push(e); });
+  const catOrder = stats.categoryOrder.filter(c => byCat[c] && byCat[c].length);
+  const groupsHtml = catOrder.map(cat => `
+    <div class="stats-detail-group">
+      <div class="stats-detail-group-head">${esc(cat)} <span class="today-names-count">${byCat[cat].length} คน</span></div>
+      <div class="today-names-list">${byCat[cat].map(e => `<span class="name-chip" data-jump="${esc(e.username)}">${esc(e.username)}</span>`).join("")}</div>
+    </div>`).join("");
   el.innerHTML = `
     <div class="stats-detail-panel">
-      <div class="stats-detail-head">${STAT_LABELS[activeStatKey]} <span class="today-names-count">${names.length} คน</span></div>
-      ${names.length
-        ? `<div class="today-names-list">${names.map(n => `<span class="name-chip" data-jump="${esc(n)}">${esc(n)}</span>`).join("")}</div>`
-        : `<div class="today-names-empty">ไม่มี</div>`}
+      <div class="stats-detail-head">${STAT_LABELS[activeStatKey]} <span class="today-names-count">${entries.length} คน</span></div>
+      ${groupsHtml}
     </div>`;
 }
 
