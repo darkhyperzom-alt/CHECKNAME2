@@ -131,16 +131,68 @@
   }
   .del-person-btn:hover { color: #e57373; background: #241318; }
 
-  .cat-section { margin: 24px 0 10px; }
-  .cat-title { font-size: 14px; font-weight: 600; color: #c9c9d6; display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
+  .stats-bar { display: flex; gap: 12px; margin: 16px 0 22px; flex-wrap: wrap; }
+  .stat-card {
+    background: #15151a;
+    border: 1px solid #2a2a35;
+    border-radius: 12px;
+    padding: 14px 22px;
+    min-width: 100px;
+    text-align: center;
+  }
+  .stat-num { font-size: 22px; font-weight: 700; color: #fff; line-height: 1.2; }
+  .stat-lbl { font-size: 11px; color: #9a9aa8; margin-top: 4px; }
+  .stat-card.morning .stat-num { color: #4caf6e; }
+  .stat-card.night .stat-num { color: #8a8aff; }
+  .stat-card.off .stat-num { color: #e57373; }
+  .stat-card.pn .stat-num { color: #f0b429; }
+  .stat-card.total .stat-num { color: #6366f1; }
+  .stat-note { font-size: 12px; color: #6f6f7d; padding: 10px 2px; }
+
+  .cat-section { margin: 26px 0 10px; }
+  .cat-title { font-size: 14px; font-weight: 600; color: #c9c9d6; display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding-bottom: 8px; border-bottom: 1px solid #21212a; }
   .cat-count { font-size: 11px; color: #6f6f7d; font-weight: 500; }
+
+  .shift-group { margin: 10px 0 16px; }
+  .shift-group-summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #c9c9d6;
+    padding: 8px 4px;
+    user-select: none;
+  }
+  .shift-group-summary::-webkit-details-marker { display: none; }
+  .shift-group-summary::before {
+    content: "▸";
+    display: inline-block;
+    transition: transform 0.15s ease;
+    color: #6f6f7d;
+    font-size: 11px;
+  }
+  .shift-group[open] > .shift-group-summary::before { transform: rotate(90deg); }
+  .shift-group-summary:hover { color: #fff; }
+  .shift-group-count { font-size: 11px; color: #6f6f7d; font-weight: 500; }
 
   .table-wrap {
     background: #15151a;
     border: 1px solid #2a2a35;
     border-radius: 14px;
     overflow-x: auto;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    scrollbar-width: thin;
+    scrollbar-color: #35354a #15151a;
   }
+  .table-wrap::-webkit-scrollbar { height: 10px; }
+  .table-wrap::-webkit-scrollbar-track { background: #15151a; border-radius: 8px; }
+  .table-wrap::-webkit-scrollbar-thumb { background: #35354a; border-radius: 8px; border: 2px solid #15151a; }
+  .table-wrap::-webkit-scrollbar-thumb:hover { background: #6366f1; }
+  tbody tr:hover td { background: #1a1a22; }
+  tbody tr:hover td.name-col { background: #1a1a22; }
   table { border-collapse: collapse; }
   th, td { padding: 0; font-size: 12px; text-align: center; white-space: nowrap; }
   thead th { background: #1a1a22; color: #9a9aa8; font-weight: 500; padding: 8px 6px; }
@@ -197,6 +249,8 @@
   <a href="/" class="back-link">← กลับหน้าแดชบอร์ด</a> · <a href="ms-settings:speech" class="back-link" title="เปิดหน้าตั้งค่าเสียงพูดของ Windows — เลือก Add a language แล้วเพิ่มภาษาไทยเพื่อให้เสียงเตือนพูดไทยได้ (ใช้ได้เฉพาะ Windows)">🔊 ตั้งค่าเสียงไทย</a>
   <h1 style="margin-top:8px;">📅 ตารางกะรายเดือน</h1>
   <p class="sub">คลิกที่ช่องวันเพื่อสลับ เช้า → ดึก → หยุด → พักร้อน → ว่าง — ตารางนี้เป็นตัวกำหนดกะของแต่ละคนในแต่ละวันจริง (ระบบเช็คชื่อยึดจากตารางนี้ของ "วันนี้" โดยตรงแล้ว ไม่ใช้หน้าแก้ไขกะแบบเดิมอีกต่อไป)</p>
+
+  <div class="stats-bar" id="stats-bar"></div>
 
   <div class="admin-bar" id="admin-bar">
     <input type="password" id="admin-code-input" placeholder="รหัสแอดมิน">
@@ -408,6 +462,37 @@ function countCode(p, code) {
   return Object.values(p.days || {}).filter(c => c === code).length;
 }
 
+// สรุปยอดของ "วันนี้" จริง — ใช้ได้เฉพาะตอนกำลังดูเดือนปัจจุบันอยู่เท่านั้น เพราะ API ส่งมาแค่วันในเดือนที่กำลังดู
+function computeTodayStats(data) {
+  if (!data || state.year !== todayKey.year || state.month !== todayKey.month) return null;
+  const day = todayKey.day;
+  const stats = { morning: 0, night: 0, off: 0, pn: 0, total: data.people.length };
+  data.people.forEach(p => {
+    const code = p.days[day] || p.days[String(day)] || null;
+    if (code === "D") stats.morning++;
+    else if (code === "N") stats.night++;
+    else if (code === "X") stats.off++;
+    else if (code === "PN") stats.pn++;
+  });
+  return stats;
+}
+
+function renderStatsBar(data) {
+  const el = document.getElementById("stats-bar");
+  const stats = computeTodayStats(data);
+  if (!stats) {
+    el.innerHTML = `<div class="stat-note">สรุปยอดวันนี้ดูได้เฉพาะตอนเปิดดูเดือนปัจจุบันเท่านั้น</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="stat-card morning"><div class="stat-num">${stats.morning}</div><div class="stat-lbl">☀️ กะเช้าวันนี้</div></div>
+    <div class="stat-card night"><div class="stat-num">${stats.night}</div><div class="stat-lbl">🌙 กะดึกวันนี้</div></div>
+    <div class="stat-card off"><div class="stat-num">${stats.off}</div><div class="stat-lbl">หยุดวันนี้</div></div>
+    <div class="stat-card pn"><div class="stat-num">${stats.pn}</div><div class="stat-lbl">พักร้อนวันนี้</div></div>
+    <div class="stat-card total"><div class="stat-num">${stats.total}</div><div class="stat-lbl">ทั้งหมด</div></div>
+  `;
+}
+
 function renderDeptTabs(data) {
   const hasOther = data.people.some(p => p.category === "อื่นๆ");
   const tabs = ["ทั้งหมด", ...(data.categories || []), ...(hasOther ? ["อื่นๆ"] : [])];
@@ -473,17 +558,33 @@ function renderSections(data) {
 
   sections.innerHTML = catOrder.map(cat => {
     const rows = [...byCat[cat]].sort(cmp);
+    const morningRows = rows.filter(p => dominantShift(p) === "เช้า");
+    const nightRows = rows.filter(p => dominantShift(p) === "ดึก");
+    const noneRows = rows.filter(p => !dominantShift(p));
     return `
       <div class="cat-section">
         <h2 class="cat-title">${esc(cat)} <span class="cat-count">${rows.length} คน</span></h2>
-        <div class="table-wrap">
-          <table>
-            <thead>${headerRowHtml(daysInMonth)}</thead>
-            <tbody>${rows.map(p => rowHtml(p, daysInMonth)).join("")}</tbody>
-          </table>
-        </div>
+        ${shiftGroupHtml("☀️ กะเช้า", morningRows, daysInMonth, true)}
+        ${shiftGroupHtml("🌙 กะดึก", nightRows, daysInMonth, false)}
+        ${shiftGroupHtml("❔ ยังไม่ระบุกะ", noneRows, daysInMonth, false)}
       </div>`;
   }).join("");
+}
+
+// พับ/กางแยกตามกะได้ทีละกลุ่ม (ใช้ <details> ของ HTML เอง ไม่ต้องเขียน JS toggle เพิ่ม) — กะดึกเริ่มพับไว้ตามที่ขอ
+// แต่ยังเห็นจำนวนคนที่ summary เสมอแม้ยังไม่กาง
+function shiftGroupHtml(label, rows, daysInMonth, defaultOpen) {
+  if (!rows.length) return "";
+  return `
+    <details class="shift-group"${defaultOpen ? " open" : ""}>
+      <summary class="shift-group-summary">${esc(label)} <span class="shift-group-count">${rows.length} คน</span></summary>
+      <div class="table-wrap">
+        <table>
+          <thead>${headerRowHtml(daysInMonth)}</thead>
+          <tbody>${rows.map(p => rowHtml(p, daysInMonth)).join("")}</tbody>
+        </table>
+      </div>
+    </details>`;
 }
 
 async function loadCalendar() {
@@ -496,6 +597,7 @@ async function loadCalendar() {
     }
     latestCalendarData = await res.json();
     document.getElementById("month-label").textContent = `${MONTH_NAMES[state.month - 1]} ${state.year}`;
+    renderStatsBar(latestCalendarData);
     renderDeptTabs(latestCalendarData);
     renderSiteOptions(latestCalendarData);
     renderSections(latestCalendarData);
@@ -589,6 +691,7 @@ document.getElementById("sections").addEventListener("click", async (e) => {
       if (next) person.days[day] = next;
       else delete person.days[day];
     }
+    renderStatsBar(latestCalendarData);
 
     const row = btn.closest("tr");
     const offCell = row.querySelector(".off-col");
