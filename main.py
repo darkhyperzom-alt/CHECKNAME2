@@ -2,6 +2,8 @@ import os
 import re
 import asyncio
 import calendar
+import csv
+import io
 import threading
 import time
 import json as _json
@@ -301,7 +303,18 @@ def invalidate_shift_cache():
         _shift_cache["at"] = 0.0
 
 
-CALENDAR_CODE_TO_SHIFT = {"D": "เช้า", "N": "ดึก", "X": "หยุด", "PN": "หยุด"}
+# รหัสในตารางกะรับได้หลากหลายตามที่ไฟล์ต้นทางใช้จริง (D/N/X/XX/PN/PL/SL/TX/...) เก็บ/โชว์ตามที่ import มาเป๊ะๆ
+# ไม่ล็อกเป็นลิสต์ตายตัว เผื่อไฟล์ต้นทางมีโค้ดใหม่เพิ่มมาในอนาคต
+SHIFT_CODE_RE = re.compile(r"^[A-Z]{1,4}$")
+
+
+# แต่กับการตัดสินกะเพื่อเช็คชื่อ มีแค่ D กับ N เท่านั้นที่เป็นวันทำงานจริง โค้ดอื่นทั้งหมดถือเป็น "หยุด" เหมือนกันหมด
+def shift_label_for_code(code):
+    if code == "D":
+        return "เช้า"
+    if code == "N":
+        return "ดึก"
+    return "หยุด"
 
 _calendar_cache = {"data": {}, "at": 0.0, "day": None}
 _calendar_lock = threading.Lock()
@@ -320,7 +333,7 @@ def load_today_shift_map(force=False):
     try:
         with db() as cur:
             cur.execute("SELECT username, code FROM shift_calendar WHERE day = %s", (today_bkk,))
-            result = {norm_name(r["username"]): CALENDAR_CODE_TO_SHIFT.get(r["code"], r["code"]) for r in cur.fetchall()}
+            result = {norm_name(r["username"]): shift_label_for_code(r["code"]) for r in cur.fetchall()}
         with _calendar_lock:
             _calendar_cache["data"] = result
             _calendar_cache["at"] = now_ts
@@ -794,8 +807,8 @@ def set_shift_calendar_day():
 
     if not username or not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
         return jsonify({"error": "ต้องระบุ username และ day รูปแบบ YYYY-MM-DD"}), 400
-    if code is not None and code not in ("D", "N", "X", "PN"):
-        return jsonify({"error": "code ต้องเป็น 'D', 'N', 'X', 'PN' หรือค่าว่าง (ล้างค่า)"}), 400
+    if code is not None and not SHIFT_CODE_RE.match(code):
+        return jsonify({"error": "code ต้องเป็นตัวอักษร A-Z ยาว 1-4 ตัว (เช่น D, N, X, PN) หรือค่าว่าง (ล้างค่า)"}), 400
 
     with db(commit=True) as cur:
         if code is None:
@@ -814,6 +827,98 @@ def set_shift_calendar_day():
             )
     invalidate_calendar_cache()
     return jsonify({"ok": True})
+
+
+@app.route("/api/shift-calendar/import", methods=["POST"])
+def import_shift_calendar_csv():
+    """นำเข้าตารางกะจาก CSV ต้นทาง (คอลัมน์แรก=ชื่อสั้น ตามด้วยโค้ดวันที่ 1..N) — จับคู่ชื่อสั้นกับ
+    username ใน shift_assignments โดยเทียบกับท่อนกลาง (PREFIX-ชื่อ-เว็บ) ชื่อที่หาคู่ไม่เจอจะข้ามไปเฉยๆ
+    (ไม่ได้ล็อกรายชื่อที่ยกเว้นไว้ตายตัวอีกต่อไป — ใครไม่อยู่ใน shift_assignments ก็ไม่ถูกนำเข้าเองอยู่แล้ว)
+    เขียนเป็นชุดเล็กๆ (ไม่ใช่ transaction เดียวยาวๆ) กันถือ connection นานจนแอปจริงต่อ DB ไม่ได้"""
+    if not _admin_code_ok():
+        return jsonify({"error": "รหัสแอดมินไม่ถูกต้อง"}), 403
+
+    try:
+        year = int(request.form.get("year", ""))
+        month = int(request.form.get("month", ""))
+    except ValueError:
+        return jsonify({"error": "ต้องระบุ year และ month"}), 400
+    if not (1 <= month <= 12):
+        return jsonify({"error": "month ต้องอยู่ระหว่าง 1-12"}), 400
+
+    file = request.files.get("file")
+    if not file or not file.filename:
+        return jsonify({"error": "ต้องแนบไฟล์ CSV"}), 400
+
+    try:
+        raw = file.read().decode("utf-8-sig", errors="replace")
+    except Exception as e:
+        return jsonify({"error": f"อ่านไฟล์ไม่สำเร็จ: {e}"}), 400
+
+    rows = list(csv.reader(io.StringIO(raw)))
+    if not rows:
+        return jsonify({"error": "ไฟล์ว่างเปล่า"}), 400
+    rows = rows[1:]  # ข้ามหัวตาราง
+
+    days_in_month = calendar.monthrange(year, month)[1]
+
+    with db() as cur:
+        cur.execute("SELECT username FROM shift_assignments")
+        all_usernames = [r["username"] for r in cur.fetchall()]
+
+    by_short = {}
+    for u in all_usernames:
+        parts = u.split("-")
+        short = parts[1].strip().upper() if len(parts) > 1 else u.upper()
+        by_short.setdefault(short, []).append(u)
+
+    matched_names = 0
+    unmatched = []
+    skipped_cells = 0
+    rows_to_upsert = []
+
+    for row in rows:
+        if not row or not row[0].strip():
+            continue
+        name = row[0].strip()
+        usernames = by_short.get(name.upper())
+        if not usernames:
+            unmatched.append(name)
+            continue
+        matched_names += 1
+        day_codes = row[1:1 + days_in_month]
+        for i, raw_code in enumerate(day_codes, start=1):
+            code = (raw_code or "").strip().upper()
+            if not code:
+                continue
+            if not SHIFT_CODE_RE.match(code):
+                skipped_cells += 1
+                continue
+            date_str = f"{year:04d}-{month:02d}-{i:02d}"
+            for u in usernames:
+                rows_to_upsert.append((u, date_str, code))
+
+    BATCH_SIZE = 200
+    for start in range(0, len(rows_to_upsert), BATCH_SIZE):
+        batch = rows_to_upsert[start:start + BATCH_SIZE]
+        with db(commit=True) as cur:
+            for u, date_str, code in batch:
+                cur.execute(
+                    """
+                    INSERT INTO shift_calendar (username, day, code)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (username, day) DO UPDATE SET code = EXCLUDED.code
+                    """,
+                    (u, date_str, code),
+                )
+
+    invalidate_calendar_cache()
+    return jsonify({
+        "matched_names": matched_names,
+        "unmatched": unmatched,
+        "cells_imported": len(rows_to_upsert),
+        "cells_skipped": skipped_cells,
+    })
 
 
 @app.route("/api/shift-calendar/<path:username>", methods=["DELETE"])

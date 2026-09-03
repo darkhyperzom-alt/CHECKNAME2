@@ -186,6 +186,7 @@
   .cal-cell.cal-N { background: #1a1a3a; color: #8a8aff; }
   .cal-cell.cal-X { background: #3a1717; color: #e57373; }
   .cal-cell.cal-PN { background: #3a2a10; color: #f0b429; }
+  .cal-cell.cal-other { background: #152233; color: #7dd3fc; font-size: 9px; }
 
   .empty-msg { padding: 20px; text-align: center; color: #6f6f7d; font-size: 13px; }
 </style>
@@ -200,6 +201,8 @@
   <div class="admin-bar" id="admin-bar">
     <input type="password" id="admin-code-input" placeholder="รหัสแอดมิน">
     <button id="admin-unlock-btn">ปลดล็อกแก้ไข</button>
+    <button id="import-csv-btn" title="นำเข้าตารางกะจากไฟล์ CSV ของเดือนที่กำลังดูอยู่ — โค้ดในไฟล์จะถูกเก็บตามที่มาเป๊ะๆ (D/N/X/XX/PN/ฯลฯ)">📥 นำเข้า CSV</button>
+    <input type="file" id="csv-file-input" accept=".csv" hidden>
     <span id="admin-status" class="locked">🔒 ล็อกอยู่ — ดูได้อย่างเดียว ใส่รหัสเพื่อแก้ไข/ลบ</span>
   </div>
 
@@ -213,6 +216,7 @@
       <div class="legend-item"><span class="legend-swatch" style="background:#1a1a3a; color:#8a8aff;"></span> N = ดึก</div>
       <div class="legend-item"><span class="legend-swatch" style="background:#3a1717; color:#e57373;"></span> X = หยุด</div>
       <div class="legend-item"><span class="legend-swatch" style="background:#3a2a10; color:#f0b429;"></span> PN = พักร้อน</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:#152233; color:#7dd3fc;"></span> อื่นๆ = ตามไฟล์ต้นทาง (เช่น XX, PL, SL, TX)</div>
     </div>
   </div>
 
@@ -252,7 +256,8 @@ function setMsg(text, ok){
 
 const MONTH_NAMES = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน",
                       "กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
-const CYCLE = [null, "D", "N", "X", "PN"];
+const CYCLE = [null, "D", "N", "X", "PN"]; // คลิกมือวนแค่ 5 ค่านี้ — โค้ดอื่นๆ ที่ import มา (XX/PL/SL/TX/...) โชว์ตามที่มา แต่ถ้าคลิกจะกลับเข้าสู่วงจรนี้
+const KNOWN_CODES = new Set(["D", "N", "X", "PN"]);
 
 const nowLocal = new Date();
 const state = { year: nowLocal.getFullYear(), month: nowLocal.getMonth() + 1 };
@@ -290,15 +295,55 @@ document.getElementById("admin-unlock-btn").addEventListener("click", () => {
 });
 updateAdminUI();
 
+document.getElementById("import-csv-btn").addEventListener("click", () => {
+  if (!unlocked) { setMsg("กรุณาใส่รหัสแอดมินก่อนนำเข้า", false); return; }
+  document.getElementById("csv-file-input").click();
+});
+
+document.getElementById("csv-file-input").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = ""; // เคลียร์ไว้ กันเลือกไฟล์เดิมซ้ำแล้วไม่ trigger change รอบถัดไป
+  if (!file) return;
+  if (!unlocked) { setMsg("กรุณาใส่รหัสแอดมินก่อนนำเข้า", false); return; }
+  if (!confirm(`นำเข้าไฟล์ "${file.name}" ลงตารางกะเดือน ${MONTH_NAMES[state.month - 1]} ${state.year} เลยไหม? (โค้ดในไฟล์จะถูกเก็บตามที่มาเป๊ะๆ)`)) return;
+
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("year", state.year);
+  fd.append("month", state.month);
+
+  setMsg("กำลังนำเข้า...", true);
+  try {
+    const res = await fetch("/api/shift-calendar/import", {
+      method: "POST",
+      headers: { "X-Admin-Code": adminCode },
+      body: fd,
+    });
+    if (res.status === 403) { lockAgain(); return; }
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.error || "นำเข้าไม่สำเร็จ");
+    const unmatchedCount = (result.unmatched || []).length;
+    setMsg(
+      `นำเข้าสำเร็จ: ${result.matched_names} คน / ${result.cells_imported} ช่อง` +
+      (unmatchedCount ? ` — หาไม่เจอ ${unmatchedCount} ชื่อ` : "") +
+      (result.cells_skipped ? ` — ข้าม ${result.cells_skipped} ช่อง (โค้ดไม่ถูกต้อง)` : ""),
+      true
+    );
+    loadCalendar();
+  } catch (err) {
+    setMsg("เกิดข้อผิดพลาด: " + err.message, false);
+  }
+});
+
 function nextCode(code) {
   const idx = CYCLE.indexOf(code || null);
   return CYCLE[(idx + 1) % CYCLE.length];
 }
 
 function dayCellHtml(username, dayNum, code) {
-  const cls = "cal-cell" + (code ? ` cal-${code}` : "");
+  const cls = "cal-cell" + (code ? (KNOWN_CODES.has(code) ? ` cal-${code}` : " cal-other") : "");
   const todayCls = (state.year === todayKey.year && state.month === todayKey.month && dayNum === todayKey.day) ? " today" : "";
-  return `<td class="day-col${todayCls}"><button type="button" class="${cls}" data-username="${esc(username)}" data-day="${dayNum}" data-code="${code || ""}">${code || ""}</button></td>`;
+  return `<td class="day-col${todayCls}"><button type="button" class="${cls}" data-username="${esc(username)}" data-day="${dayNum}" data-code="${esc(code || "")}">${esc(code || "")}</button></td>`;
 }
 
 // ป้ายกะของคนนี้ยึดจากข้อมูลจริงในตารางเดือนที่กำลังดูอยู่ (D เยอะสุด = เช้า, N เยอะสุด = ดึก)
