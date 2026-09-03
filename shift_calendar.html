@@ -149,6 +149,29 @@
   .stat-card.total .stat-num { color: #6366f1; }
   .stat-note { font-size: 12px; color: #6f6f7d; padding: 10px 2px; }
 
+  .today-names { display: flex; gap: 14px; margin: 0 0 22px; flex-wrap: wrap; }
+  .today-names-panel { flex: 1; min-width: 260px; background: #15151a; border: 1px solid #2a2a35; border-radius: 12px; padding: 14px 16px; }
+  .today-names-panel h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .today-names-panel.morning h3 { color: #4caf6e; }
+  .today-names-panel.night h3 { color: #8a8aff; }
+  .today-names-count { font-size: 11px; color: #6f6f7d; font-weight: 500; margin-left: auto; }
+  .today-names-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 170px; overflow-y: auto; }
+  .today-names-list::-webkit-scrollbar { width: 8px; }
+  .today-names-list::-webkit-scrollbar-track { background: #15151a; }
+  .today-names-list::-webkit-scrollbar-thumb { background: #35354a; border-radius: 8px; }
+  .name-chip {
+    font-size: 11px;
+    background: #1a1a22;
+    border: 1px solid #2a2a35;
+    border-radius: 999px;
+    padding: 4px 10px;
+    color: #d6d6e0;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .name-chip:hover { border-color: #6366f1; color: #fff; }
+  .today-names-empty { font-size: 12px; color: #6f6f7d; }
+
   .cat-section { margin: 26px 0 10px; }
   .cat-title { font-size: 14px; font-weight: 600; color: #c9c9d6; display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding-bottom: 8px; border-bottom: 1px solid #21212a; }
   .cat-count { font-size: 11px; color: #6f6f7d; font-weight: 500; }
@@ -251,6 +274,7 @@
   <p class="sub">คลิกที่ช่องวันเพื่อสลับ เช้า → ดึก → หยุด → พักร้อน → ว่าง — ตารางนี้เป็นตัวกำหนดกะของแต่ละคนในแต่ละวันจริง (ระบบเช็คชื่อยึดจากตารางนี้ของ "วันนี้" โดยตรงแล้ว ไม่ใช้หน้าแก้ไขกะแบบเดิมอีกต่อไป)</p>
 
   <div class="stats-bar" id="stats-bar"></div>
+  <div class="today-names" id="today-names"></div>
 
   <div class="admin-bar" id="admin-bar">
     <input type="password" id="admin-code-input" placeholder="รหัสแอดมิน">
@@ -466,14 +490,16 @@ function countCode(p, code) {
 function computeTodayStats(data) {
   if (!data || state.year !== todayKey.year || state.month !== todayKey.month) return null;
   const day = todayKey.day;
-  const stats = { morning: 0, night: 0, off: 0, pn: 0, total: data.people.length };
+  const stats = { morning: 0, night: 0, off: 0, pn: 0, total: data.people.length, morningNames: [], nightNames: [] };
   data.people.forEach(p => {
     const code = p.days[day] || p.days[String(day)] || null;
-    if (code === "D") stats.morning++;
-    else if (code === "N") stats.night++;
+    if (code === "D") { stats.morning++; stats.morningNames.push(p.username); }
+    else if (code === "N") { stats.night++; stats.nightNames.push(p.username); }
     else if (code === "X") stats.off++;
     else if (code === "PN") stats.pn++;
   });
+  stats.morningNames.sort((a, b) => a.localeCompare(b));
+  stats.nightNames.sort((a, b) => a.localeCompare(b));
   return stats;
 }
 
@@ -482,6 +508,7 @@ function renderStatsBar(data) {
   const stats = computeTodayStats(data);
   if (!stats) {
     el.innerHTML = `<div class="stat-note">สรุปยอดวันนี้ดูได้เฉพาะตอนเปิดดูเดือนปัจจุบันเท่านั้น</div>`;
+    document.getElementById("today-names").innerHTML = "";
     return;
   }
   el.innerHTML = `
@@ -491,7 +518,37 @@ function renderStatsBar(data) {
     <div class="stat-card pn"><div class="stat-num">${stats.pn}</div><div class="stat-lbl">พักร้อนวันนี้</div></div>
     <div class="stat-card total"><div class="stat-num">${stats.total}</div><div class="stat-lbl">ทั้งหมด</div></div>
   `;
+  renderTodayNames(stats);
 }
+
+// เอาชื่อคนที่ทำกะเช้า/กะดึก "วันนี้" ขึ้นมาโชว์ตรงๆ เลย — คลิกชื่อไหนจะค้นหาชื่อนั้นในตารางด้านล่างให้ทันที
+function todayNamesPanel(cls, title, names) {
+  const body = names.length
+    ? `<div class="today-names-list">${names.map(n => `<span class="name-chip" data-jump="${esc(n)}">${esc(n)}</span>`).join("")}</div>`
+    : `<div class="today-names-empty">ไม่มีใครอยู่กะนี้วันนี้</div>`;
+  return `
+    <div class="today-names-panel ${cls}">
+      <h3>${title}<span class="today-names-count">${names.length} คน</span></h3>
+      ${body}
+    </div>`;
+}
+
+function renderTodayNames(stats) {
+  const el = document.getElementById("today-names");
+  el.innerHTML =
+    todayNamesPanel("morning", "☀️ กะเช้าวันนี้", stats.morningNames) +
+    todayNamesPanel("night", "🌙 กะดึกวันนี้", stats.nightNames);
+}
+
+document.getElementById("today-names").addEventListener("click", (e) => {
+  const chip = e.target.closest(".name-chip");
+  if (!chip) return;
+  const name = chip.dataset.jump;
+  searchTerm = name;
+  document.getElementById("search-input").value = name;
+  if (latestCalendarData) renderSections(latestCalendarData);
+  document.getElementById("sections").scrollIntoView({ behavior: "smooth", block: "start" });
+});
 
 function renderDeptTabs(data) {
   const hasOther = data.people.some(p => p.category === "อื่นๆ");
