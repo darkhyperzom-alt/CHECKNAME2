@@ -466,12 +466,16 @@ def get_current_shift_rounds(now, override=None):
 
 
 def save_round_announcement(round_label, now):
+    """บันทึกเวลาประกาศรอบ — กันข้อความประกาศเก่าที่มาถึงช้า (backlog หลัง reconnect) เขียนทับ
+    เวลาประกาศจริงที่ใหม่กว่าที่บันทึกไว้แล้ว ไม่งั้น checkin_log ที่ผูกกับรอบนี้จะพลอยเพี้ยนตามไปด้วย"""
     with db(commit=True) as cur:
         cur.execute(
             """
             INSERT INTO round_status (round_label, announced_at)
             VALUES (%s, %s)
-            ON CONFLICT (round_label) DO UPDATE SET announced_at = EXCLUDED.announced_at
+            ON CONFLICT (round_label) DO UPDATE
+                SET announced_at = EXCLUDED.announced_at
+                WHERE EXCLUDED.announced_at > round_status.announced_at
             """,
             (round_label, now),
         )
@@ -479,7 +483,9 @@ def save_round_announcement(round_label, now):
 
 def save_checkin(user_id, now):
     """บันทึกว่า user_id เช็คชื่อสำหรับรอบล่าสุดที่ถูกประกาศ 'ในกะปัจจุบัน'
-    (เดิมไม่กรองกะ ทำให้ไปเกาะรอบของเมื่อวานแล้วเงียบหาย)"""
+    (เดิมไม่กรองกะ ทำให้ไปเกาะรอบของเมื่อวานแล้วเงียบหาย)
+    UPSERT กันไม่ให้ค่าเก่ากว่าเขียนทับค่าใหม่กว่า — จำเป็นตอน Telegram ส่ง backlog ข้อความเก่ามาถึง
+    ช้าหลัง reconnect แล้วประมวลผลไม่เรียงเวลา ไม่งั้นเช็คชื่อรอบหลังที่ถูกต้องจะโดนทับด้วยรอบก่อนหน้าที่มาถึงช้ากว่า"""
     period_start = get_period_start(now)
     with db(commit=True) as cur:
         cur.execute(
@@ -500,7 +506,9 @@ def save_checkin(user_id, now):
             """
             INSERT INTO checkin_log (user_id, round_label, checked_at)
             VALUES (%s, %s, %s)
-            ON CONFLICT (user_id, round_label) DO UPDATE SET checked_at = EXCLUDED.checked_at
+            ON CONFLICT (user_id, round_label) DO UPDATE
+                SET checked_at = EXCLUDED.checked_at
+                WHERE EXCLUDED.checked_at > checkin_log.checked_at
             """,
             (user_id, current_round, now),
         )
