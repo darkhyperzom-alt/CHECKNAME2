@@ -1367,13 +1367,20 @@ def _build_status_payload(cur, shift_override=None):
         person_shift = today_shift_map.get(norm_name(p["username"]))
 
         if person_shift == "หยุด":
-            # ตารางระบุว่าวันนี้เป็นวันหยุดของคนนี้ — ไม่ต้องเช็คชื่อ ไม่ใช่การพลาดรอบ
-            p["checkin"] = {
-                "round1": {"label": "วันหยุดวันนี้", "status": "dayoff", "time": None},
-                "round2": {"label": "วันหยุดวันนี้", "status": "dayoff", "time": None},
-                "round3": {"label": "วันหยุดวันนี้", "status": "dayoff", "time": None},
-            }
-            continue
+            # กะดึกทำงานข้ามเที่ยงคืน พอปฏิทินข้ามวัน ตารางกะของ "วันนี้" อาจว่าง/เป็นวันหยุดทั้งที่จริง
+            # ยังทำงานกะดึกของเมื่อคืนต่ออยู่ (ยังไม่จบกะ) เลยไม่บังคับ "หยุด" ทันทีอีกต่อไป — ใช้กติกา
+            # เดียวกับที่ round_status_for ใช้ตัดสินคนทั่วไปอยู่แล้ว: ประกาศรอบแรกมาเกิน 1 ชม.แล้วยังไม่
+            # เช็คชื่อ ค่อยถือว่าหยุดจริง ถ้าเช็คชื่อรอบแรกไปแล้วถือว่ากำลังทำงานจริง ไม่ใช่วันหยุด
+            probe_status, _ = round_status_for(p["user_id"], round1_label, is_round1=True)
+            if probe_status == "holiday":
+                p["checkin"] = {
+                    "round1": {"label": "วันหยุดวันนี้", "status": "dayoff", "time": None},
+                    "round2": {"label": "วันหยุดวันนี้", "status": "dayoff", "time": None},
+                    "round3": {"label": "วันหยุดวันนี้", "status": "dayoff", "time": None},
+                }
+                continue
+            # ยังตัดสินไม่ได้ (ยังไม่ครบ 1 ชม.) หรือเช็คชื่อไปแล้ว -> ปฏิบัติเหมือนอยู่กะนี้ตามปกติ
+            person_shift = current_shift
 
         if person_shift and person_shift != current_shift:
             # คนนี้ไม่ได้อยู่กะนี้ ไม่ต้องไปเช็คว่าเช็คชื่อรอบของกะนี้หรือไม่ (ไม่ใช่ภาระของเขา)
