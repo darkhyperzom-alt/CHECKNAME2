@@ -45,7 +45,7 @@ DASH_PASS = os.environ.get("DASH_PASS", "")
 # (เจอเคสจริงที่กลุ่มเช็คชื่อค้างไปเกือบทั้งวัน) — Railway ตั้ง restartPolicyType=ON_FAILURE ไว้แล้ว
 # พอเราปิดตัวเอง (os._exit) จะเปิดใหม่ให้อัตโนมัติโดยไม่ต้อง build ใหม่ ใช้เวลาสั้นๆ
 # ตั้งเป็น 0 เพื่อปิดฟีเจอร์นี้ถ้าไม่ต้องการ
-WATCHDOG_RESTART_HOURS = float(os.environ.get("WATCHDOG_RESTART_HOURS", "6"))
+WATCHDOG_RESTART_HOURS = float(os.environ.get("WATCHDOG_RESTART_HOURS", "4"))
 
 # รหัสแอดมินสำหรับแก้ไข/ลบข้อมูลในตารางกะรายเดือน (ดูตารางได้ปกติ แต่แก้ไขต้องใส่รหัสนี้)
 # ถ้าไม่ตั้งไว้ จะเปิดให้แก้ไขได้เลยเหมือนเดิม (เหมือนพฤติกรรม DASH_USER)
