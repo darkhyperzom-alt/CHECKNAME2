@@ -41,6 +41,12 @@ ACTIVE_DAYS = int(os.environ.get("ACTIVE_DAYS", "14"))
 DASH_USER = os.environ.get("DASH_USER", "")
 DASH_PASS = os.environ.get("DASH_PASS", "")
 
+# รีสตาร์ทตัวเองเป็นระยะกัน Telethon ค้างเงียบๆ ไม่รับ event ใหม่โดยไม่มี error ให้เห็นเลย
+# (เจอเคสจริงที่กลุ่มเช็คชื่อค้างไปเกือบทั้งวัน) — Railway ตั้ง restartPolicyType=ON_FAILURE ไว้แล้ว
+# พอเราปิดตัวเอง (os._exit) จะเปิดใหม่ให้อัตโนมัติโดยไม่ต้อง build ใหม่ ใช้เวลาสั้นๆ
+# ตั้งเป็น 0 เพื่อปิดฟีเจอร์นี้ถ้าไม่ต้องการ
+WATCHDOG_RESTART_HOURS = float(os.environ.get("WATCHDOG_RESTART_HOURS", "6"))
+
 # รหัสแอดมินสำหรับแก้ไข/ลบข้อมูลในตารางกะรายเดือน (ดูตารางได้ปกติ แต่แก้ไขต้องใส่รหัสนี้)
 # ถ้าไม่ตั้งไว้ จะเปิดให้แก้ไขได้เลยเหมือนเดิม (เหมือนพฤติกรรม DASH_USER)
 SHIFT_ADMIN_CODE = os.environ.get("SHIFT_ADMIN_CODE", "")
@@ -1434,6 +1440,18 @@ def request_refresh():
     _wake_event.set()
 
 
+def restart_watchdog():
+    """ปิดโปรเซสตัวเองทุกๆ WATCHDOG_RESTART_HOURS ชม. เพื่อบังคับให้ Telethon เชื่อมต่อใหม่เป็นระยะ
+    กันเคสค้างเงียบๆ แบบไม่มี error โผล่ให้เห็นเลย (เจอจริงมาแล้ว) — Railway (ON_FAILURE) จะรีสตาร์ทให้เอง
+    ข้อความที่พลาดไปช่วงรีสตาร์ทสั้นๆ Telegram จะส่งย้อนมาให้เองตอนต่อกลับ (checkin_log กันเขียนทับ
+    ค่าใหม่ด้วยค่าเก่าไว้แล้ว จึงไม่เสี่ยงข้อมูลเพี้ยนซ้ำแบบเมื่อก่อน)"""
+    if WATCHDOG_RESTART_HOURS <= 0:
+        return
+    time.sleep(WATCHDOG_RESTART_HOURS * 3600)
+    print(f"[watchdog] รีสตาร์ทตามกำหนด (ทุก {WATCHDOG_RESTART_HOURS} ชม.) กันบอทค้างเงียบแบบไม่มี error ให้เห็น")
+    os._exit(1)
+
+
 def snapshot_updater():
     global _snapshot_version
     while True:
@@ -1523,6 +1541,11 @@ if __name__ == "__main__":
     # background thread สร้าง snapshot สำหรับ SSE (query database ตัวเดียว)
     snapshot_thread = threading.Thread(target=snapshot_updater, daemon=True)
     snapshot_thread.start()
+
+    if WATCHDOG_RESTART_HOURS > 0:
+        watchdog_thread = threading.Thread(target=restart_watchdog, daemon=True)
+        watchdog_thread.start()
+        print(f"ตั้งรีสตาร์ทตัวเองอัตโนมัติทุก {WATCHDOG_RESTART_HOURS} ชม. (กันบอทค้างเงียบ) — ปิดได้ด้วย WATCHDOG_RESTART_HOURS=0")
 
     print("กำลังฟังข้อความใหม่จากกลุ่ม Telegram... (กด Ctrl+C เพื่อหยุด)")
     with client:
