@@ -75,7 +75,7 @@
   .live .dot { width:6px; height:6px; border-radius:50%; background:currentColor; animation:livePulse 1.5s ease infinite; }
   .viewers { display:inline-flex; align-items:center; gap:5px; background:rgba(130,140,255,.10); border:1px solid rgba(130,140,255,.28); color:#b3bbff; font-size:11px; padding:3px 10px; border-radius:999px; white-space:nowrap; }
   .viewers b { font-weight:700; color:#fff; }
-  .header-right { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-left:auto; }
+  .header-right { display:flex; align-items:center; gap:10px 16px; flex-wrap:wrap; flex-basis:100%; justify-content:space-between; }
   .shift-seg { display:flex; gap:6px; flex-wrap:wrap; }
   .shift-btn { font-size:12px; padding:7px 14px; border-radius:999px; color:var(--muted); cursor:pointer; border:1px solid var(--border); background:var(--panel3); font-family:inherit; font-weight:600; transition:all 0.15s ease; }
   .shift-btn.active { background:linear-gradient(135deg,var(--accent),#8258e5); color:#fff; border-color:transparent; }
@@ -84,7 +84,7 @@
   .edit-link:hover { background:rgba(99,102,241,.2); }
   #checkin-lock-btn.unlocked { border-color:rgba(229,115,115,.4); color:#ff9d9d; background:rgba(229,115,115,.1); }
   #checkin-lock-btn.unlocked:hover { background:rgba(229,115,115,.18); }
-  .updated { font-size:11px; color:var(--muted2); }
+  .updated { font-size:11px; color:var(--muted2); margin-left:auto; }
 
   /* ล็อกไม่ให้กดเช็คชื่อพลาด — ต้องกดปลดล็อกก่อนปุ่ม + ถึงจะกดติด (กันเผลอกดตอนแค่ดูจอ) */
   body.checkin-locked .ci-btn { opacity:0.35; cursor:not-allowed; }
@@ -189,9 +189,9 @@
       <i class="ti ti-clipboard-list" style="font-size:22px; color:var(--accent2);" aria-hidden="true"></i>
       <span class="title">สถานะพนักงานวันนี้</span>
       <span class="live" id="live-badge"><span class="dot"></span> เรียลไทม์</span>
-      <span class="viewers" id="viewers-badge" style="display:none" title="จำนวนคนที่เปิดหน้านี้อยู่ตอนนี้ (เปิดหลายแท็บในเบราว์เซอร์เดียวกันนับเป็น 1 คน)"><i class="ti ti-eye" aria-hidden="true"></i> กำลังชมอยู่ <b id="viewers-count">0</b> คน</span>
     </div>
     <div class="header-right">
+      <span class="viewers" id="viewers-badge" style="display:none" title="จำนวนคนที่เปิดหน้านี้อยู่ตอนนี้ (เปิดหลายแท็บในเบราว์เซอร์เดียวกันนับเป็น 1 คน)"><i class="ti ti-eye" aria-hidden="true"></i> กำลังชมอยู่ <b id="viewers-count">0</b> คน</span>
       <div class="shift-seg" id="category-seg"></div>
       <button class="edit-link" id="checkin-lock-btn" onclick="toggleCheckinLock()"></button>
       <a href="/shift-calendar" class="edit-link"><i class="ti ti-calendar" aria-hidden="true"></i> ตารางกะ</a>
