@@ -1635,6 +1635,32 @@ _wake_event = threading.Event()
 _subs = defaultdict(int)   # {shift_key: จำนวนหน้าจอที่เปิดดูกะนั้นอยู่}
 _subs_lock = threading.Lock()
 
+# คนที่กำลังเปิดหน้าแดชบอร์ดอยู่ นับตาม "เบราว์เซอร์" (หน้าเว็บสร้างรหัสสุ่มเก็บใน localStorage ส่งมากับ ?vid=)
+# เปิดหลายแท็บในเบราว์เซอร์เดียวกันนับเป็น 1 คน — เก็บใต้ lock ของ _snapshot_cv เพื่อให้ stream ทุกตัว
+# ตื่นมาส่งตัวเลขใหม่ได้ทันทีตอนมีคนเข้า/ออก โดยไม่ต้องส่ง payload ก้อนใหญ่ซ้ำ
+_VIEWER_ID_RE = re.compile(r"[A-Za-z0-9_-]{6,40}")
+_viewers = defaultdict(int)  # {viewer_id: จำนวนการเชื่อมต่อของคนนั้นที่เปิดอยู่}
+_viewers_version = 0
+
+
+def _viewer_join(viewer_id):
+    global _viewers_version
+    with _snapshot_cv:
+        _viewers[viewer_id] += 1
+        if _viewers[viewer_id] == 1:
+            _viewers_version += 1
+            _snapshot_cv.notify_all()
+
+
+def _viewer_leave(viewer_id):
+    global _viewers_version
+    with _snapshot_cv:
+        _viewers[viewer_id] -= 1
+        if _viewers[viewer_id] <= 0:
+            del _viewers[viewer_id]
+            _viewers_version += 1
+            _snapshot_cv.notify_all()
+
 
 def request_refresh():
     """สั่งให้ snapshot thread ทำงานรอบใหม่ทันที"""
@@ -1688,28 +1714,43 @@ def api_stream():
     if shift_override not in ("เช้า", "ดึก"):
         shift_override = None
 
+    # อ่าน request ตรงนี้ (ก่อนเข้า generator) เพราะใน generator ไม่มี request context แล้ว
+    viewer_id = request.args.get("vid", "")
+    if not _VIEWER_ID_RE.fullmatch(viewer_id):
+        viewer_id = "c-" + os.urandom(8).hex()  # ไม่มีรหัสที่ใช้ได้ = นับเป็น 1 คนต่อ 1 การเชื่อมต่อ
+
     def event_stream():
         with _subs_lock:
             _subs[shift_override] += 1
+        _viewer_join(viewer_id)
         request_refresh()  # สร้าง payload ของกะนี้ทันทีถ้ายังไม่มีใน cache
 
         last_version = -1
+        last_viewers_version = -1
         last_payload = None
         try:
             while True:
                 with _snapshot_cv:
                     have_new = _snapshot_cv.wait_for(
-                        lambda: _snapshot_version != last_version, timeout=15
+                        lambda: _snapshot_version != last_version
+                        or _viewers_version != last_viewers_version,
+                        timeout=15,
                     )
                     last_version = _snapshot_version
                     payload_str = _snapshot_cache.get(shift_override)
+                    viewers_changed = _viewers_version != last_viewers_version
+                    last_viewers_version = _viewers_version
+                    viewer_count = len(_viewers)
 
+                if viewers_changed:
+                    yield f"event: viewers\ndata: {viewer_count}\n\n"
                 if payload_str is not None and payload_str != last_payload:
                     yield f"data: {payload_str}\n\n"
                     last_payload = payload_str
                 elif not have_new:
                     yield ": keepalive\n\n"  # กัน proxy ตัดการเชื่อมต่อตอนไม่มีความเคลื่อนไหว
         finally:
+            _viewer_leave(viewer_id)
             with _subs_lock:
                 _subs[shift_override] = max(0, _subs[shift_override] - 1)
 

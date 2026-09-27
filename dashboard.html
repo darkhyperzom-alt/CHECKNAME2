@@ -61,7 +61,7 @@
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
   }
-  .title-wrap { display:flex; align-items:center; gap:10px; }
+  .title-wrap { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .title {
     font-size: 19px;
     font-weight: 800;
@@ -71,9 +71,11 @@
     background-clip: text;
     color: transparent;
   }
-  .live { display:inline-flex; align-items:center; gap:5px; background:rgba(76,175,110,.12); border:1px solid rgba(76,175,110,.3); color:#7bdb9c; font-size:11px; padding:3px 10px; border-radius:999px; }
+  .live { display:inline-flex; align-items:center; gap:5px; background:rgba(76,175,110,.12); border:1px solid rgba(76,175,110,.3); color:#7bdb9c; font-size:11px; padding:3px 10px; border-radius:999px; white-space:nowrap; }
   .live.off { background:rgba(229,115,115,.12); border-color:rgba(229,115,115,.3); color:#ff9d9d; }
   .live .dot { width:6px; height:6px; border-radius:50%; background:currentColor; animation:livePulse 1.5s ease infinite; }
+  .viewers { display:inline-flex; align-items:center; gap:5px; background:rgba(130,140,255,.10); border:1px solid rgba(130,140,255,.28); color:#b3bbff; font-size:11px; padding:3px 10px; border-radius:999px; white-space:nowrap; }
+  .viewers b { font-weight:700; color:#fff; }
   .header-right { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .shift-seg { display:flex; gap:6px; flex-wrap:wrap; }
   .shift-btn { font-size:12px; padding:7px 14px; border-radius:999px; color:var(--muted); cursor:pointer; border:1px solid var(--border); background:var(--panel3); font-family:inherit; font-weight:600; transition:all 0.15s ease; }
@@ -188,6 +190,7 @@
       <i class="ti ti-clipboard-list" style="font-size:22px; color:var(--accent2);" aria-hidden="true"></i>
       <span class="title">สถานะพนักงานวันนี้</span>
       <span class="live" id="live-badge"><span class="dot"></span> เรียลไทม์</span>
+      <span class="viewers" id="viewers-badge" style="display:none" title="จำนวนคนที่เปิดหน้านี้อยู่ตอนนี้ (เปิดหลายแท็บในเบราว์เซอร์เดียวกันนับเป็น 1 คน)"><i class="ti ti-eye" aria-hidden="true"></i> กำลังชมอยู่ <b id="viewers-count">0</b> คน</span>
     </div>
     <div class="header-right">
       <div class="shift-seg" id="category-seg"></div>
@@ -612,9 +615,29 @@ async function loadData(){
   }catch(e){ console.error("โหลดไม่สำเร็จ",e); }
 }
 
+// รหัสสุ่มประจำเบราว์เซอร์ ให้เซิร์ฟเวอร์นับ "กำลังชมอยู่กี่คน" โดยเปิดหลายแท็บไม่นับซ้ำ (ใช้ localStorage ไม่ได้ก็ปล่อยว่าง
+// เซิร์ฟเวอร์จะนับเป็น 1 คนต่อ 1 การเชื่อมต่อแทน)
+function getViewerId(){
+  try{
+    let v=localStorage.getItem("viewer_id");
+    if(!v){
+      v=(window.crypto&&crypto.randomUUID?crypto.randomUUID():Math.random().toString(36).slice(2)+Date.now().toString(36))
+        .replace(/[^A-Za-z0-9_-]/g,"").slice(0,32);
+      localStorage.setItem("viewer_id",v);
+    }
+    return v;
+  }catch(e){ return ""; }
+}
+
 function connectSSE(){
   if(eventSource) eventSource.close();
-  eventSource=new EventSource("/api/stream");
+  eventSource=new EventSource("/api/stream?vid="+encodeURIComponent(getViewerId()));
+  eventSource.addEventListener("viewers",(e)=>{
+    const n=parseInt(e.data,10);
+    if(isNaN(n)) return;
+    document.getElementById("viewers-count").textContent=n.toLocaleString("th-TH");
+    document.getElementById("viewers-badge").style.display="";
+  });
   eventSource.onmessage=(e)=>{
     try{ latestData=JSON.parse(e.data); renderData(latestData);
       document.getElementById("live-badge").classList.remove("off");
