@@ -882,6 +882,14 @@ def import_shift_calendar_csv():
     rows = list(csv.reader(io.StringIO(raw)))
     if not rows:
         return jsonify({"error": "ไฟล์ว่างเปล่า"}), 400
+
+    # หาคอลัมน์ "1" (วันที่ 1) จากหัวตารางเอง ไม่ hardcode ตำแหน่ง — ไฟล์ export จริงมีคอลัมน์เมทาดาต้า
+    # (แผนก/กะ/เว็บ) ปนอยู่ก่อนคอลัมน์วันที่ ถ้า hardcode ไว้แล้ววันถัดมาเปลี่ยนจำนวนคอลัมน์เมทาดาต้า
+    # จะได้โค้ดผิดวันแบบเงียบๆ (เลื่อนวันไปทั้งตาราง) โดยไม่มี error ให้เห็นเลย
+    try:
+        day1_idx = rows[0].index("1")
+    except ValueError:
+        return jsonify({"error": "หาคอลัมน์วันที่ '1' ในหัวตารางไม่เจอ (รูปแบบไฟล์เปลี่ยนไปหรือเปล่า?)"}), 400
     rows = rows[1:]  # ข้ามหัวตาราง
 
     days_in_month = calendar.monthrange(year, month)[1]
@@ -910,7 +918,7 @@ def import_shift_calendar_csv():
             unmatched.append(name)
             continue
         matched_names += 1
-        day_codes = row[1:1 + days_in_month]
+        day_codes = row[day1_idx:day1_idx + days_in_month]
         for i, raw_code in enumerate(day_codes, start=1):
             code = (raw_code or "").strip().upper()
             if not code:

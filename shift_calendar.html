@@ -570,7 +570,16 @@ const nowLocal = new Date();
 const state = { year: nowLocal.getFullYear(), month: nowLocal.getMonth() + 1 };
 const todayKey = { year: nowLocal.getFullYear(), month: nowLocal.getMonth() + 1, day: nowLocal.getDate() };
 
+// รหัสแอดมินถูกส่งเป็น HTTP header (X-Admin-Code) ซึ่งรับได้แค่ตัวอักษร ISO-8859-1 (ASCII) เท่านั้น
+// ถ้ามีอักษรไทย/emoji หลุดเข้ามา fetch() จะ throw ตั้งแต่ก่อนส่ง request เลย (ไม่ใช่ error จากเซิร์ฟเวอร์)
+const ADMIN_CODE_RE = /^[\x20-\x7e]*$/;
+
 let adminCode = sessionStorage.getItem("shiftAdminCode") || "";
+if (!ADMIN_CODE_RE.test(adminCode)) {
+  // รหัสเก่าที่เคยบันทึกไว้ผิดรูปแบบ (พิมพ์ตอนเปิดคีย์บอร์ดไทยไว้ ฯลฯ) เคลียร์ทิ้งกันพังซ้ำทุกครั้งที่เข้าหน้านี้
+  adminCode = "";
+  sessionStorage.removeItem("shiftAdminCode");
+}
 let unlocked = !!adminCode; // มองโลกในแง่ดีไว้ก่อน — เซิร์ฟเวอร์จะปฏิเสธเองถ้ารหัสผิดตอนแก้ไขจริง
 
 function updateAdminUI() {
@@ -595,6 +604,10 @@ function lockAgain(msg) {
 document.getElementById("admin-unlock-btn").addEventListener("click", () => {
   adminCode = document.getElementById("admin-code-input").value.trim();
   if (!adminCode) { setMsg("กรุณาใส่รหัสแอดมิน", false); return; }
+  if (!ADMIN_CODE_RE.test(adminCode)) {
+    setMsg("รหัสแอดมินมีอักษรที่ใช้ไม่ได้ (เช่น ภาษาไทย/emoji) กรุณาใช้ตัวอักษร A-Z หรือตัวเลขเท่านั้น", false);
+    return;
+  }
   sessionStorage.setItem("shiftAdminCode", adminCode);
   unlocked = true;
   updateAdminUI();
