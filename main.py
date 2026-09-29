@@ -336,12 +336,22 @@ _calendar_cache = {"data": {}, "at": 0.0, "day": None}
 _calendar_lock = threading.Lock()
 
 
-def load_today_shift_map(force=False):
-    """โหลดกะของ 'วันนี้' (เวลาไทย) จากตาราง shift_calendar — คืน {ชื่อ normalize แล้ว -> 'เช้า'/'ดึก'/'หยุด'}
+def shift_day_bkk(now=None, override=None):
+    """วันที่ของกะที่กำลังทำอยู่ (วันที่กะเริ่ม ตามเวลาไทย) — ไม่ใช่วันที่ตามปฏิทิน
+    กะดึกเริ่ม 20:05 แล้วลากข้ามเที่ยงคืนไปจบ 08:05 ของอีกวัน ทั้งกะต้องอ่านตารางกะของวันที่เริ่ม
+    เดิมใช้วันที่ตามปฏิทิน พอเลยเที่ยงคืนก็ไปอ่านแถวของวันพรุ่งนี้ทั้งที่กะยังไม่จบ
+    คนที่พรุ่งนี้หยุดเลยขึ้น "วันหยุด" กลางกะ — ตอนนี้วันเปลี่ยนตอนจบกะ (08:05) แทน"""
+    start = get_period_start(now or datetime.now(timezone.utc), override=override)
+    return start.astimezone(BANGKOK_TZ).date()
+
+
+def load_today_shift_map(force=False, day=None):
+    """โหลดกะของ 'วันของกะนี้' (เวลาไทย) จากตาราง shift_calendar — คืน {ชื่อ normalize แล้ว -> 'เช้า'/'ดึก'/'หยุด'}
     ใช้แทน load_shift_map()/shift_assignments.shift ในการตัดสินกะของแต่ละคนแล้ว (ตามที่ตกลงให้ยึดตารางกะรายวันเป็นหลัก)
-    คนที่ไม่มีแถวของวันนี้ (เช่น ยังไม่ได้ import เดือนถัดไป) จะไม่อยู่ใน dict นี้ -> ถือว่า 'ไม่จำกัดกะ'
-    (พฤติกรรมเดิมตอนยังไม่ได้เลือกกะ กันคนหายไปจากทุกกะถ้าลืม import ตารางเดือนใหม่)"""
-    today_bkk = datetime.now(BANGKOK_TZ).date()
+    คนที่ไม่มีแถวของวันนั้น (เช่น ยังไม่ได้ import เดือนถัดไป) จะไม่อยู่ใน dict นี้ -> ถือว่า 'ไม่จำกัดกะ'
+    (พฤติกรรมเดิมตอนยังไม่ได้เลือกกะ กันคนหายไปจากทุกกะถ้าลืม import ตารางเดือนใหม่)
+    day = วันที่ของกะ (ไม่ใส่ = กะที่กำลังทำอยู่ตอนนี้ ดู shift_day_bkk)"""
+    today_bkk = day or shift_day_bkk()
     now_ts = time.time()
     with _calendar_lock:
         if not force and _calendar_cache["day"] == today_bkk and now_ts - _calendar_cache["at"] < SHIFT_CACHE_TTL:
@@ -1574,18 +1584,19 @@ def _build_status_payload(cur, shift_override=None):
         current_shift = shift_override
     else:
         current_shift = "เช้า" if (8, 5) <= (now_bkk.hour, now_bkk.minute) < (20, 5) else "ดึก"
-    # กะของแต่ละคนยึดจากตารางกะรายวัน (shift_calendar) ของ "วันนี้" เป็นหลักแล้ว แทนค่ากะคงที่เดิม
-    # ใน shift_assignments — คนที่ไม่มีแถวของวันนี้ (ยังไม่ import เดือนนี้/คนใหม่) ถือว่าไม่จำกัดกะ
-    today_shift_map = load_today_shift_map()
+    # กะของแต่ละคนยึดจากตารางกะรายวัน (shift_calendar) ของ "วันที่กะนี้เริ่ม" เป็นหลักแล้ว แทนค่ากะคงที่เดิม
+    # ใน shift_assignments — คนที่ไม่มีแถวของวันนั้น (ยังไม่ import เดือนนี้/คนใหม่) ถือว่าไม่จำกัดกะ
+    # กะดึกหลังเที่ยงคืนยังอ่านแถวของเมื่อวาน (วันที่กะเริ่ม) จนจบกะตอน 08:05 ค่อยเปลี่ยนเป็นวันใหม่
+    today_shift_map = load_today_shift_map(day=period_start.astimezone(BANGKOK_TZ).date())
 
     for p in people:
         person_shift = today_shift_map.get(norm_name(p["username"]))
 
         if person_shift == "หยุด":
-            # กะดึกทำงานข้ามเที่ยงคืน พอปฏิทินข้ามวัน ตารางกะของ "วันนี้" อาจว่าง/เป็นวันหยุดทั้งที่จริง
-            # ยังทำงานกะดึกของเมื่อคืนต่ออยู่ (ยังไม่จบกะ) เลยไม่บังคับ "หยุด" ทันทีอีกต่อไป — ใช้กติกา
-            # เดียวกับที่ round_status_for ใช้ตัดสินคนทั่วไปอยู่แล้ว: ประกาศรอบแรกมาเกิน 1 ชม.แล้วยังไม่
+            # ตารางบอกว่าหยุด แต่อาจแลกกะมาทำ — ไม่บังคับ "หยุด" ทันที ใช้กติกาเดียวกับที่
+            # round_status_for ใช้ตัดสินคนทั่วไปอยู่แล้ว: ประกาศรอบแรกมาเกิน 1 ชม.แล้วยังไม่
             # เช็คชื่อ ค่อยถือว่าหยุดจริง ถ้าเช็คชื่อรอบแรกไปแล้วถือว่ากำลังทำงานจริง ไม่ใช่วันหยุด
+            # (กะดึกข้ามเที่ยงคืนไม่ต้องพึ่งกติกานี้แล้ว — อ่านแถวของวันที่กะเริ่มตั้งแต่ต้น ดู shift_day_bkk)
             probe_status, _ = round_status_for(p["user_id"], round1_label, is_round1=True)
             if probe_status == "holiday":
                 p["checkin"] = {
