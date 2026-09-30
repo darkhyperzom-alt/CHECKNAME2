@@ -6,6 +6,7 @@ import csv
 import io
 import threading
 import time
+import zlib
 import json as _json
 from collections import defaultdict
 from contextlib import contextmanager
@@ -1589,9 +1590,9 @@ def _build_status_payload(cur, shift_override=None):
             probe_status, _ = round_status_for(p["user_id"], round1_label, is_round1=True)
             if probe_status == "holiday":
                 p["checkin"] = {
-                    "round1": {"label": "วันหยุดวันนี้", "status": "dayoff", "time": None},
-                    "round2": {"label": "วันหยุดวันนี้", "status": "dayoff", "time": None},
-                    "round3": {"label": "วันหยุดวันนี้", "status": "dayoff", "time": None},
+                    "round1": {"status": "dayoff", "time": None},
+                    "round2": {"status": "dayoff", "time": None},
+                    "round3": {"status": "dayoff", "time": None},
                 }
                 continue
             # ยังตัดสินไม่ได้ (ยังไม่ครบ 1 ชม.) หรือเช็คชื่อไปแล้ว -> ปฏิบัติเหมือนอยู่กะนี้ตามปกติ
@@ -1600,9 +1601,9 @@ def _build_status_payload(cur, shift_override=None):
         if person_shift and person_shift != current_shift:
             # คนนี้ไม่ได้อยู่กะนี้ ไม่ต้องไปเช็คว่าเช็คชื่อรอบของกะนี้หรือไม่ (ไม่ใช่ภาระของเขา)
             p["checkin"] = {
-                "round1": {"label": "ไม่ใช่กะนี้", "status": "offshift", "time": None},
-                "round2": {"label": "ไม่ใช่กะนี้", "status": "offshift", "time": None},
-                "round3": {"label": "ไม่ใช่กะนี้", "status": "offshift", "time": None},
+                "round1": {"status": "offshift", "time": None},
+                "round2": {"status": "offshift", "time": None},
+                "round3": {"status": "offshift", "time": None},
             }
             continue
 
@@ -1618,9 +1619,9 @@ def _build_status_payload(cur, shift_override=None):
             r1_status = "green"
             r1_time = r2_time
         p["checkin"] = {
-            "round1": {"label": "เช็คชื่อรอบที่ 1", "status": r1_status, "time": r1_time},
-            "round2": {"label": "เช็คชื่อรอบที่ 2", "status": r2_status, "time": r2_time},
-            "round3": {"label": "เช็คชื่อรอบที่ 3", "status": r3_status, "time": r3_time},
+            "round1": {"status": r1_status, "time": r1_time},
+            "round2": {"status": r2_status, "time": r2_time},
+            "round3": {"status": r3_status, "time": r3_time},
         }
 
     return {
@@ -1637,6 +1638,7 @@ def _build_status_payload(cur, shift_override=None):
 # ตื่นทันทีเมื่อมีข้อความใหม่จาก Telegram (เดิมต้องรอครบรอบ 1.5 วิ + SSE poll อีก 1.5 วิ)
 
 _snapshot_cache = {}       # {shift_key: payload_str}
+_snapshot_sig_cache = {}   # {shift_key: signature_str} — ไม่รวม duration_seconds/total_today_seconds ใช้เทียบว่าเปลี่ยนจริงไหม
 _snapshot_version = 0
 _snapshot_cv = threading.Condition()
 _wake_event = threading.Event()
@@ -1687,6 +1689,22 @@ def restart_watchdog():
     os._exit(1)
 
 
+def _comparison_signature(payload):
+    """ตัด duration_seconds/total_today_seconds ออกก่อนเทียบว่า snapshot เปลี่ยนจริงไหม — สองค่านี้
+    ขยับทุกวินาทีสำหรับใครก็ตามที่ออกจากที่นั่งอยู่ (เวลานับต่อ) ทั้งที่ไม่มีอะไรเปลี่ยนจริง ถ้าเทียบ
+    payload ทั้งก้อนตรงๆ จะเห็นว่า 'เปลี่ยน' แทบทุกรอบ ทำให้ broadcast payload ~150KB ให้ทุกคนที่เปิด
+    หน้าอยู่ทุก SNAPSHOT_INTERVAL วินาทีโดยไม่จำเป็น (หน้าเว็บนับเวลาถอยหลัง/เดินหน้าเองอยู่แล้วฝั่ง
+    client ไม่ต้องรอ server ส่งมาใหม่) — egress พุ่งเพราะจุดนี้มาแล้ว"""
+    def strip(p):
+        pc = dict(p)
+        pc.pop("duration_seconds", None)
+        pc.pop("total_today_seconds", None)
+        return pc
+    sig = dict(payload)
+    sig["people"] = [strip(p) for p in payload.get("people", [])]
+    return sig
+
+
 def snapshot_updater():
     global _snapshot_version
     while True:
@@ -1696,15 +1714,19 @@ def snapshot_updater():
                 keys = {None} | {k for k, n in _subs.items() if n > 0}
 
             results = {}
+            sigs = {}
             with db() as cur:
                 for key in keys:
-                    results[key] = _json.dumps(
-                        _build_status_payload(cur, key), ensure_ascii=False, default=str
+                    payload = _build_status_payload(cur, key)
+                    results[key] = _json.dumps(payload, ensure_ascii=False, default=str)
+                    sigs[key] = _json.dumps(
+                        _comparison_signature(payload), ensure_ascii=False, default=str, sort_keys=True
                     )
 
             with _snapshot_cv:
-                changed = any(_snapshot_cache.get(k) != v for k, v in results.items())
+                changed = any(_snapshot_sig_cache.get(k) != v for k, v in sigs.items())
                 _snapshot_cache.update(results)
+                _snapshot_sig_cache.update(sigs)
                 if changed:
                     _snapshot_version += 1
                     _snapshot_cv.notify_all()
@@ -1727,7 +1749,18 @@ def api_stream():
     if not _VIEWER_ID_RE.fullmatch(viewer_id):
         viewer_id = "c-" + os.urandom(8).hex()  # ไม่มีรหัสที่ใช้ได้ = นับเป็น 1 คนต่อ 1 การเชื่อมต่อ
 
+    # payload ~150KB ต่อคนต่อครั้ง ส่งดิบๆ ให้คนเปิดหน้าค้างไว้หลายสิบคนพร้อมกันคือ egress พุ่งทันที
+    # gzip ผ่าน stream ได้เพราะ SSE เป็น text stream อยู่แล้ว ใช้ Z_SYNC_FLUSH ทุก chunk กันฝั่งรับ
+    # ต้องรอจนจบ stream ถึงจะ decode ได้ (เราไม่มีวัน "จบ" stream นี้จนกว่าจะตัดการเชื่อมต่อ)
+    use_gzip = "gzip" in request.headers.get("Accept-Encoding", "")
+
     def event_stream():
+        compressor = zlib.compressobj(6, zlib.DEFLATED, 16 + zlib.MAX_WBITS) if use_gzip else None
+
+        def emit(text):
+            data = text.encode("utf-8")
+            return compressor.compress(data) + compressor.flush(zlib.Z_SYNC_FLUSH) if compressor else data
+
         with _subs_lock:
             _subs[shift_override] += 1
         _viewer_join(viewer_id)
@@ -1751,22 +1784,25 @@ def api_stream():
                     viewer_count = len(_viewers)
 
                 if viewers_changed:
-                    yield f"event: viewers\ndata: {viewer_count}\n\n"
+                    yield emit(f"event: viewers\ndata: {viewer_count}\n\n")
                 if payload_str is not None and payload_str != last_payload:
-                    yield f"data: {payload_str}\n\n"
+                    yield emit(f"data: {payload_str}\n\n")
                     last_payload = payload_str
                 elif not have_new:
-                    yield ": keepalive\n\n"  # กัน proxy ตัดการเชื่อมต่อตอนไม่มีความเคลื่อนไหว
+                    yield emit(": keepalive\n\n")  # กัน proxy ตัดการเชื่อมต่อตอนไม่มีความเคลื่อนไหว
         finally:
             _viewer_leave(viewer_id)
             with _subs_lock:
                 _subs[shift_override] = max(0, _subs[shift_override] - 1)
 
-    return Response(event_stream(), mimetype="text/event-stream", headers={
+    headers = {
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
         "Connection": "keep-alive",
-    })
+    }
+    if use_gzip:
+        headers["Content-Encoding"] = "gzip"
+    return Response(event_stream(), mimetype="text/event-stream", headers=headers)
 
 
 def run_flask():
