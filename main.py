@@ -379,9 +379,36 @@ def load_today_shift_map(force=False):
             return _calendar_cache["data"]
 
 
+_yesterday_calendar_cache = {"data": {}, "at": 0.0, "day": None}
+
+
+def load_yesterday_shift_map(force=False):
+    """เหมือน load_today_shift_map() แต่ของ 'เมื่อวาน' — ใช้เฉพาะช่วงเลยเที่ยงคืนของกะดึก (ก่อน 08:05)
+    เพื่อเช็คว่าเมื่อคืนคนนี้มีกะดึกจริงไหม (ตารางกะ 'วันนี้' ข้ามเที่ยงคืนไปแล้วใช้เช็คไม่ได้อีกต่อไป)"""
+    yesterday_bkk = datetime.now(BANGKOK_TZ).date() - timedelta(days=1)
+    now_ts = time.time()
+    with _calendar_lock:
+        if not force and _yesterday_calendar_cache["day"] == yesterday_bkk and now_ts - _yesterday_calendar_cache["at"] < SHIFT_CACHE_TTL:
+            return _yesterday_calendar_cache["data"]
+    try:
+        with db() as cur:
+            cur.execute("SELECT username, code FROM shift_calendar WHERE day = %s", (yesterday_bkk,))
+            result = {norm_name(r["username"]): shift_label_for_code(r["code"]) for r in cur.fetchall()}
+        with _calendar_lock:
+            _yesterday_calendar_cache["data"] = result
+            _yesterday_calendar_cache["at"] = now_ts
+            _yesterday_calendar_cache["day"] = yesterday_bkk
+        return result
+    except Exception as e:
+        print(f"โหลดตารางกะเมื่อวานไม่สำเร็จ: {e}")
+        with _calendar_lock:
+            return _yesterday_calendar_cache["data"]
+
+
 def invalidate_calendar_cache():
     with _calendar_lock:
         _calendar_cache["at"] = 0.0
+        _yesterday_calendar_cache["at"] = 0.0
 
 
 def ensure_shift_placeholder(username):
@@ -1591,25 +1618,29 @@ def _build_status_payload(cur, shift_override=None):
     # กะของแต่ละคนยึดจากตารางกะรายวัน (shift_calendar) ของ "วันนี้" เป็นหลักแล้ว แทนค่ากะคงที่เดิม
     # ใน shift_assignments — คนที่ไม่มีแถวของวันนี้ (ยังไม่ import เดือนนี้/คนใหม่) ถือว่าไม่จำกัดกะ
     today_shift_map = load_today_shift_map()
+    # ช่วงเลยเที่ยงคืนของกะดึก (00:00-08:05) ปฏิทิน "วันนี้" ข้ามไปวันถัดไปแล้ว แต่กะดึกที่เริ่มเมื่อคืน
+    # ยังไม่จบ — ต้องเช็คตารางกะ "เมื่อวาน" แยกต่างหากถึงจะรู้ว่าเมื่อคืนมีกะดึกจริงไหม (ตารางกะวันนี้บอกไม่ได้)
+    after_midnight_in_night = current_shift == "ดึก" and now_bkk.hour < 20
+    yesterday_shift_map = load_yesterday_shift_map() if after_midnight_in_night else {}
 
     for p in people:
         person_shift = today_shift_map.get(norm_name(p["username"]))
 
         if person_shift == "หยุด":
-            # กะดึกทำงานข้ามเที่ยงคืน พอปฏิทินข้ามวัน ตารางกะของ "วันนี้" อาจว่าง/เป็นวันหยุดทั้งที่จริง
-            # ยังทำงานกะดึกของเมื่อคืนต่ออยู่ (ยังไม่จบกะ) เลยไม่บังคับ "หยุด" ทันทีอีกต่อไป — ใช้กติกา
-            # เดียวกับที่ round_status_for ใช้ตัดสินคนทั่วไปอยู่แล้ว: ประกาศรอบแรกมาเกิน 1 ชม.แล้วยังไม่
-            # เช็คชื่อ ค่อยถือว่าหยุดจริง ถ้าเช็คชื่อรอบแรกไปแล้วถือว่ากำลังทำงานจริง ไม่ใช่วันหยุด
-            probe_status, _ = round_status_for(p["user_id"], round1_label, is_round1=True)
-            if probe_status == "holiday":
+            # ตารางกะ "วันนี้" บอกว่าหยุด แต่ถ้าตอนนี้อยู่ช่วงเลยเที่ยงคืนของกะดึก ต้องเช็คว่าเมื่อคืน
+            # (ตามปฏิทินจริง ไม่ใช่วันนี้) มีกะดึกไหมก่อนฟันธง เพราะกะดึกที่เริ่มเมื่อคืนทำงานข้ามเที่ยงคืน
+            # มาถึงตอนนี้ได้ ทั้งที่ตารางกะของ "วันนี้" (วันถัดไป) ว่าง/เป็นวันหยุดไปแล้ว — เดิมใช้วิธีรอดูว่า
+            # เช็คชื่อรอบแรกหรือยัง (รอ 1 ชม.ก่อนค่อยฟันธง) ทำให้คนที่หยุดจริงๆ ขึ้นเป็น "ต้องเช็คชื่อ" ค้าง
+            # อยู่เป็นชั่วโมงก่อนจะกลายเป็นวันหยุด เปลี่ยนมาเช็คตารางกะเมื่อวานตรงๆ ให้ถูกทันทีไม่ต้องรอ
+            if after_midnight_in_night and yesterday_shift_map.get(norm_name(p["username"])) == "ดึก":
+                person_shift = current_shift  # เมื่อคืนมีกะดึกจริง ยังทำงานต่อเนื่องข้ามเที่ยงคืนอยู่
+            else:
                 p["checkin"] = {
                     "round1": {"status": "dayoff", "time": None},
                     "round2": {"status": "dayoff", "time": None},
                     "round3": {"status": "dayoff", "time": None},
                 }
                 continue
-            # ยังตัดสินไม่ได้ (ยังไม่ครบ 1 ชม.) หรือเช็คชื่อไปแล้ว -> ปฏิบัติเหมือนอยู่กะนี้ตามปกติ
-            person_shift = current_shift
 
         if person_shift and person_shift != current_shift:
             # คนนี้ไม่ได้อยู่กะนี้ ไม่ต้องไปเช็คว่าเช็คชื่อรอบของกะนี้หรือไม่ (ไม่ใช่ภาระของเขา)
