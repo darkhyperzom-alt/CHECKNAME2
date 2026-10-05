@@ -575,6 +575,23 @@ def save_checkin(user_id, now):
         )
 
 
+def ensure_known_user(username, user_id, now):
+    """บันทึกชื่อของคนที่ "รู้จักจากข้อความเช็คชื่อ" แต่ไม่เคยกดปุ่มสถานะในกลุ่มหลักเลยสักครั้ง — ไม่งั้น
+    ไม่มีที่ไหนเก็บชื่อของเขาไว้เลย (checkin_log เก็บแค่ user_id) ทำให้หายไปจากตารางทั้งที่เช็คชื่อจริง
+    ทุกรอบ ON CONFLICT DO NOTHING กันไม่ให้ไปทับสถานะจริงของคนที่เคยกดปุ่มสถานะแล้ว (ค่าจริงของเขาสำคัญกว่า
+    ค่า default ตรงนี้)"""
+    with db(commit=True) as cur:
+        cur.execute(
+            """
+            INSERT INTO current_status (user_id, username, status, since)
+            VALUES (%s, %s, 'กลับที่นั่ง', %s)
+            ON CONFLICT (user_id) DO NOTHING
+            """,
+            (user_id, username, now),
+        )
+    ensure_shift_placeholder(username)
+
+
 # ===== ส่วน parse ข้อความ Telegram =====
 
 def clean_text(text):
@@ -653,6 +670,22 @@ def parse_message(text):
         return None
 
     return None
+
+
+def extract_user_ref(text):
+    """ดึง (username, user_id) จากบรรทัด "ผู้ใช้: X" / "รหัสผู้ใช้: N" เฉยๆ (regex เดียวกับ parse_message
+    แต่ไม่สนใจว่ามีบรรทัด "ลงทะเบียนสำเร็จ" หรือกิจกรรมอะไร) — ใช้เก็บชื่อจากข้อความยืนยันของบอทเช็คชื่อ
+    ในกลุ่มเช็คชื่อ ซึ่งมีรูปแบบเดียวกับบอทในกลุ่มสถานะหลัก"""
+    cleaned = clean_text(text)
+    user_match = re.search(r"(?<!รหัส)ผู้ใช้\s*[:：]\s*\[?([^\]\(\n]+)", cleaned)
+    userid_match = re.search(r"รหัสผู้ใช้\s*[:：]\s*(\d+)", cleaned)
+    if not user_match or not userid_match:
+        return None
+    username = user_match.group(1).strip()
+    user_id = userid_match.group(1).strip()
+    if any(username.endswith(suf) for suf in EXCLUDED_SUFFIXES):
+        return None
+    return username, user_id
 
 
 def save_status(data, when=None):
@@ -762,6 +795,15 @@ async def process_event(event):
             request_refresh()
             print(f"[{stamp}] ประกาศรอบใหม่: {round_label}{lag_note}")
         else:
+            # บางคนเช็คชื่อ (ส่งรูป) อย่างเดียว ไม่เคยกดปุ่มสถานะในกลุ่มหลักเลยสักครั้ง เลยไม่มีชื่อเก็บไว้
+            # ที่ไหนในระบบ (checkin_log เก็บแค่ user_id) หายไปจากตารางทั้งที่เช็คชื่อจริง — ข้อความยืนยัน
+            # ที่บอทเช็คชื่ออีกตัวตอบกลับในกลุ่มนี้มีชื่อ+รหัสผู้ใช้อยู่แล้ว (รูปแบบเดียวกับกลุ่มสถานะหลัก)
+            # ถือโอกาสเก็บตรงนี้ไปด้วยเลย ทำก่อนเช็ค skip reason เพราะข้อความยืนยันนี้เองจะโดนข้าม
+            # ว่า "ส่งโดยบอท" อยู่แล้วด้านล่าง
+            ref = extract_user_ref(text)
+            if ref:
+                await asyncio.to_thread(ensure_known_user, ref[0], ref[1], when)
+
             # เช็คชื่อ — รองรับทั้งส่งรูปเฉยๆ, ข้อความล้วน, หรือรูปพร้อมแคปชั่น
             # แต่กันข้อความที่เห็นชัดว่าไม่ใช่การเช็คชื่อออกก่อน
             skip = await checkin_skip_reason(event, text)
