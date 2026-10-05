@@ -151,6 +151,23 @@ ROUND_LABELS = [
 ]
 # -------------------
 
+# จับเลขรอบจากข้อความประกาศ แทนการเทียบ ROUND_LABELS ทั้งก้อนตรงๆ เพราะเจอจริงว่าแอดมินกลุ่มเช็คชื่อ
+# เปลี่ยนรูปแบบข้อความได้เอง (6 ต.ค. 69: จากเดิมมีบรรทัด "กะ...() รอบที่ N" แยกต่างหาก กลายเป็นเลขรอบ
+# ต่อท้ายบรรทัด "เวลาเช็คชื่อไม่เกิน 10 นาที N" แทน ไม่มีบรรทัด "กะ...รอบที่" อีกเลย) ถ้าเทียบทั้งก้อน
+# แบบเดิมจะไม่ตรงอีกต่อไป ทำให้พลาดรอบประกาศเงียบๆ เหมือนเหตุการณ์ 24 ก.ย. — ตรวจแบบนี้แทนให้ทนทาน
+# กับการเปลี่ยนรูปแบบ (รองรับทั้งข้อความเก่าและใหม่): หาเลขรอบจากบรรทัด "ไม่เกิน ... นาที" ก่อน (รูปแบบใหม่)
+# ถ้าไม่เจอค่อย fallback ไปหาคำว่า "รอบที่ N" (รูปแบบเดิม) แล้วค่อยต่อกับกะที่กำลังทำงานอยู่ ณ เวลานั้น
+ROUND_NUMBER_NEW_RE = re.compile(r"เวลาเช็คชื่อไม่เกิน\s*\d+\s*นาที\s*([123])")
+ROUND_NUMBER_OLD_RE = re.compile(r"รอบที่\s*([123])")
+
+
+def detect_round_label(text, when):
+    m = ROUND_NUMBER_NEW_RE.search(text) or ROUND_NUMBER_OLD_RE.search(text)
+    if not m:
+        return None
+    n = int(m.group(1))
+    return get_current_shift_rounds(when)[n - 1]
+
 if not api_id or not api_hash or not group_id:
     raise RuntimeError(
         "กรุณาตั้งค่า environment variable: TG_API_ID, TG_API_HASH, TG_GROUP_ID ก่อนรัน "
@@ -711,11 +728,7 @@ async def process_event(event):
     elif checkin_group_id and event.chat_id == checkin_group_id:
         # ตรวจจับประกาศรอบจาก "ข้อความล้วน" เท่านั้น (text ไม่ใช่ caption)
         # กัน forward รูปประกาศพร้อมแคปชั่นทำให้ announced_at ถูก reset ผิดพลาด
-        round_label = None
-        for label in ROUND_LABELS:
-            if label in text:
-                round_label = label
-                break
+        round_label = detect_round_label(text, when)
 
         if round_label:
             await asyncio.to_thread(save_round_announcement, round_label, when)
