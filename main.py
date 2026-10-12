@@ -726,7 +726,11 @@ def event_time(event):
     ถ้าอัปเดตมาถึงช้า ตัวเลขบนแดชบอร์ดจะยังตรงกับเวลาที่พนักงานกดจริง
     และค่า lag ใช้เป็นตัวชี้ว่าอาการช้าเกิดที่ฝั่ง Telegram หรือฝั่งเรา"""
     now = datetime.now(timezone.utc)
-    when = getattr(event.message, "date", None)
+    # ถ้าเป็นข้อความที่ถูกแก้ไข (MessageEdited) ต้องใช้ edit_date ไม่ใช่ date — date คือเวลาที่ "สร้าง"
+    # ข้อความครั้งแรกเท่านั้น ไม่ขยับอีกเลยไม่ว่าจะแก้กี่ครั้งก็ตาม เจอจริงว่าประกาศรอบที่ 3 ของกะเช้า
+    # เป็นข้อความเดิมที่ถูกแก้ไขซ้ำทุกวัน (ไม่ได้โพสต์ข้อความใหม่) ทำให้ before this fix เวลาประกาศค้าง
+    # อยู่ที่วันแรกที่สร้างข้อความตลอด ถึงจะแก้ไขใหม่ทุกวันก็ตาม — เช็คชื่อรอบ 3 เลยไม่ถูกบันทึกอีกเลย
+    when = getattr(event.message, "edit_date", None) or getattr(event.message, "date", None)
     if not when:
         return now, 0.0
     if when.tzinfo is None:
