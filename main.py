@@ -2031,7 +2031,9 @@ def debug_list_dialogs():
         return jsonify({"error": "รหัสแอดมินไม่ถูกต้อง"}), 403
 
     async def _fetch():
+        print("[debug-dialogs] coroutine started")
         dialogs = await client.get_dialogs()
+        print(f"[debug-dialogs] got {len(dialogs)} dialogs")
         return [
             {
                 "id": d.id,
@@ -2044,10 +2046,16 @@ def debug_list_dialogs():
         ]
 
     try:
+        ping_fut = asyncio.run_coroutine_threadsafe(asyncio.sleep(0, result="pong"), client.loop)
+        ping = ping_fut.result(timeout=5)
+    except Exception as e:
+        return jsonify({"stage": "ping", "error": f"{type(e).__name__}: {e}"}), 500
+
+    try:
         fut = asyncio.run_coroutine_threadsafe(_fetch(), client.loop)
         result = fut.result(timeout=60)
     except Exception as e:
-        return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
+        return jsonify({"stage": "fetch", "ping": ping, "error": f"{type(e).__name__}: {e}"}), 500
     return jsonify({"dialogs": result})
 
 
