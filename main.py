@@ -2023,42 +2023,6 @@ def api_stream():
     return Response(event_stream(), mimetype="text/event-stream", headers=headers)
 
 
-@app.route("/api/debug/dialogs", methods=["GET"])
-def debug_list_dialogs():
-    """เช็คว่าบัญชี Telegram ที่ TG_SESSION ใช้อยู่ ตอนนี้อยู่ในกลุ่ม/แชทไหนบ้าง — เรียกผ่าน client
-    ตัวเดียวกับที่ต่อ Telegram อยู่แล้วจริง (ไม่เปิด connection ใหม่ กัน AuthKeyDuplicatedError)"""
-    if not _admin_code_ok():
-        return jsonify({"error": "รหัสแอดมินไม่ถูกต้อง"}), 403
-
-    async def _fetch():
-        print("[debug-dialogs] coroutine started")
-        dialogs = await client.get_dialogs()
-        print(f"[debug-dialogs] got {len(dialogs)} dialogs")
-        return [
-            {
-                "id": d.id,
-                "name": d.name,
-                "is_group": d.is_group,
-                "is_channel": d.is_channel,
-                "unread_count": d.unread_count,
-            }
-            for d in dialogs
-        ]
-
-    try:
-        ping_fut = asyncio.run_coroutine_threadsafe(asyncio.sleep(0, result="pong"), client.loop)
-        ping = ping_fut.result(timeout=5)
-    except Exception as e:
-        return jsonify({"stage": "ping", "error": f"{type(e).__name__}: {e}"}), 500
-
-    try:
-        fut = asyncio.run_coroutine_threadsafe(_fetch(), client.loop)
-        result = fut.result(timeout=60)
-    except Exception as e:
-        return jsonify({"stage": "fetch", "ping": ping, "error": f"{type(e).__name__}: {e}"}), 500
-    return jsonify({"dialogs": result})
-
-
 def run_flask():
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
@@ -2094,4 +2058,18 @@ if __name__ == "__main__":
 
     print("กำลังฟังข้อความใหม่จากกลุ่ม Telegram... (กด Ctrl+C เพื่อหยุด)")
     with client:
+        if os.environ.get("DUMP_DIALOGS_ON_START"):
+            async def _dump_dialogs_once():
+                """รันครั้งเดียวตอนบอทเริ่ม — เช็คว่าบัญชี TG_SESSION อยู่ในแชทไหนบ้าง (ลง log)
+                รันเป็น task บน loop เดียวกับที่ client ใช้อยู่แล้วโดยตรง ไม่ข้าม thread กัน
+                ปัญหาเรียกจาก Flask thread ผ่าน run_coroutine_threadsafe แล้วค้าง"""
+                try:
+                    dialogs = await client.get_dialogs()
+                    print(f"[dialogs] บัญชีนี้อยู่ใน {len(dialogs)} แชท/กลุ่ม/ช่อง:")
+                    for d in dialogs:
+                        kind = "กลุ่ม" if d.is_group else ("ช่อง" if d.is_channel else "แชทส่วนตัว")
+                        print(f"[dialogs]   id={d.id}\t{kind}\t{d.name}")
+                except Exception as e:
+                    print(f"[dialogs] error: {type(e).__name__}: {e}")
+            client.loop.create_task(_dump_dialogs_once())
         client.run_until_disconnected()
