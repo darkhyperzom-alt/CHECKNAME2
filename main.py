@@ -2045,9 +2045,9 @@ def debug_list_dialogs():
 
     try:
         fut = asyncio.run_coroutine_threadsafe(_fetch(), client.loop)
-        result = fut.result(timeout=15)
+        result = fut.result(timeout=60)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
     return jsonify({"dialogs": result})
 
 
