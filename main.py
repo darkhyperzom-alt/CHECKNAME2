@@ -2023,6 +2023,34 @@ def api_stream():
     return Response(event_stream(), mimetype="text/event-stream", headers=headers)
 
 
+@app.route("/api/debug/dialogs", methods=["GET"])
+def debug_list_dialogs():
+    """เช็คว่าบัญชี Telegram ที่ TG_SESSION ใช้อยู่ ตอนนี้อยู่ในกลุ่ม/แชทไหนบ้าง — เรียกผ่าน client
+    ตัวเดียวกับที่ต่อ Telegram อยู่แล้วจริง (ไม่เปิด connection ใหม่ กัน AuthKeyDuplicatedError)"""
+    if not _admin_code_ok():
+        return jsonify({"error": "รหัสแอดมินไม่ถูกต้อง"}), 403
+
+    async def _fetch():
+        dialogs = await client.get_dialogs()
+        return [
+            {
+                "id": d.id,
+                "name": d.name,
+                "is_group": d.is_group,
+                "is_channel": d.is_channel,
+                "unread_count": d.unread_count,
+            }
+            for d in dialogs
+        ]
+
+    try:
+        fut = asyncio.run_coroutine_threadsafe(_fetch(), client.loop)
+        result = fut.result(timeout=15)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"dialogs": result})
+
+
 def run_flask():
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
