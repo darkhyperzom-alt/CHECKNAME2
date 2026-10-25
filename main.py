@@ -52,6 +52,12 @@ WATCHDOG_RESTART_HOURS = float(os.environ.get("WATCHDOG_RESTART_HOURS", "4"))
 # ถ้าไม่ตั้งไว้ จะเปิดให้แก้ไขได้เลยเหมือนเดิม (เหมือนพฤติกรรม DASH_USER)
 SHIFT_ADMIN_CODE = os.environ.get("SHIFT_ADMIN_CODE", "")
 
+# ดึงตารางกะ/วันหยุดอัตโนมัติจากเว็บต้นทาง (ops.jed89.com) แทนการวาง CSV เอง — ถ้าไม่ตั้ง
+# JED89_SCHEDULE_API_KEY ไว้ ฟีเจอร์นี้จะปิดเงียบๆ (ใช้ CSV import แบบเดิมได้ตามปกติ)
+JED89_API_BASE = os.environ.get("JED89_API_BASE", "https://api.jed89.com/api/v1")
+JED89_SCHEDULE_API_KEY = os.environ.get("JED89_SCHEDULE_API_KEY", "")
+JED89_SYNC_INTERVAL = float(os.environ.get("JED89_SYNC_INTERVAL", "3600"))  # วินาที (ค่าเริ่มต้น 1 ชม.)
+
 # เสียงเตือนเกินเวลา (ElevenLabs Text-to-Speech) — ถ้าไม่ตั้ง ELEVENLABS_API_KEY ไว้
 # หน้าเว็บจะ fallback ไปใช้เสียงเบราว์เซอร์ (speechSynthesis) แทนเอง
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
@@ -416,6 +422,121 @@ def invalidate_calendar_cache():
     with _calendar_lock:
         _calendar_cache["at"] = 0.0
         _yesterday_calendar_cache["at"] = 0.0
+
+
+# ชื่อสั้นบางคนจากเว็บต้นทางไม่ตรงกับ short-name ที่ไขได้จาก username ใน shift_assignments
+# (เช่นมี 1 ต่อท้าย, หรือ username จริงมี emoji ปนจนตัด "-" แล้วได้ช่วงผิด) — แก้เฉพาะที่เจอจริง
+JED89_NAME_ALIASES = {"AMADA1": "AMADA", "RONDA": "RONDA_XO789"}
+JED89_EXTRA_USERNAMES = {"SEAWYUE": ["🌞-AMOL-SEAWYUE-EE89-🌙"]}
+JED89_MARK_ACTIVE_STATUSES = {"pending", "approved"}  # เหมือนที่หน้าเว็บต้นทางเองใช้ตัดสินว่า "มีการลา/หยุดวันนี้"
+
+
+def _jed89_day_code_for_user(user, day, date_str, shifts_by_id, cl_code, nv_code, marks_by_date):
+    """คืนรหัสกะ/วันหยุดของ 1 คนใน 1 วัน ตามตรรกะเดียวกับที่หน้าเว็บต้นทางใช้แสดงผลเอง
+    (ดูจาก schedule-grid-model ของเว็บนั้น): มีคำขอลา/หยุดที่ pending หรือ approved ให้ใช้ค่านั้นก่อน
+    ไม่งั้นถ้ายังไม่ถึงวันเริ่มงาน/ลาออกไปแล้ว ให้ใช้ CL/NV ไม่งั้นค่อยดูกะตามช่วงวันที่ (segments)"""
+    active_marks = [m for m in marks_by_date.get(date_str, []) if m.get("status") in JED89_MARK_ACTIVE_STATUSES]
+    if active_marks:
+        return active_marks[0].get("_code")
+    start_date = user.get("startDate")
+    resigned_at = user.get("resignedAt")
+    if start_date and date_str < start_date:
+        return cl_code
+    if resigned_at and date_str >= resigned_at:
+        return nv_code
+    for seg in user.get("segments") or []:
+        if seg.get("from", "") <= date_str <= seg.get("to", ""):
+            shift = shifts_by_id.get(seg.get("shiftId"))
+            return shift["code"] if shift else None
+    return None
+
+
+def jed89_fetch_and_apply_schedule(cur, year, month):
+    """ดึงตารางกะ/วันหยุดเดือนนั้นจาก ops.jed89.com มาอัปเดตตาราง shift_calendar ของเราโดยตรง
+    แทนการวาง CSV เอง (ดูที่มาของ endpoint/คีย์ที่: หน้า 'API ตารางวันหยุด' ในเว็บ ops.jed89.com)"""
+    resp = requests.get(
+        f"{JED89_API_BASE}/schedule-export",
+        params={"month": f"{year:04d}-{month:02d}"},
+        headers={"Authorization": f"Bearer {JED89_SCHEDULE_API_KEY}"},
+        timeout=20,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    days_in_month = int(data.get("days") or calendar.monthrange(year, month)[1])
+    shifts_by_id = {s["id"]: s for s in data.get("shifts", [])}
+    marktypes_by_id = {m["id"]: m for m in data.get("markTypes", [])}
+    cl_code = next((m["code"] for m in data.get("markTypes", []) if m.get("isCl")), None)
+    nv_code = next((m["code"] for m in data.get("markTypes", []) if m.get("isResignation")), None)
+
+    marks_by_user_date = defaultdict(lambda: defaultdict(list))
+    for mk in data.get("marks", []):
+        mt = marktypes_by_id.get(mk.get("markTypeId"))
+        if not mt:
+            continue
+        mk = dict(mk, _code=mt["code"])
+        marks_by_user_date[mk["userId"]][mk["date"]].append(mk)
+
+    cur.execute("SELECT username FROM shift_assignments")
+    by_short = {}
+    for r in cur.fetchall():
+        u = r["username"]
+        parts = u.split("-")
+        short = parts[1].strip().upper() if len(parts) > 1 else u.upper()
+        by_short.setdefault(short, []).append(u)
+
+    matched_names = 0
+    unmatched = []
+    rows_to_upsert = []
+    for user in data.get("users", []):
+        short = (user.get("username") or "").strip().upper()
+        usernames = JED89_EXTRA_USERNAMES.get(short) or by_short.get(JED89_NAME_ALIASES.get(short, short))
+        if not usernames:
+            unmatched.append(short)
+            continue
+        matched_names += 1
+        marks_by_date = marks_by_user_date.get(user.get("id"), {})
+        for day in range(1, days_in_month + 1):
+            date_str = f"{year:04d}-{month:02d}-{day:02d}"
+            code = _jed89_day_code_for_user(user, day, date_str, shifts_by_id, cl_code, nv_code, marks_by_date)
+            if not code:
+                continue
+            for uname in usernames:
+                rows_to_upsert.append((uname, date_str, code))
+
+    BATCH_SIZE = 200
+    for start in range(0, len(rows_to_upsert), BATCH_SIZE):
+        for uname, date_str, code in rows_to_upsert[start:start + BATCH_SIZE]:
+            cur.execute(
+                """
+                INSERT INTO shift_calendar (username, day, code)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (username, day) DO UPDATE SET code = EXCLUDED.code
+                """,
+                (uname, date_str, code),
+            )
+
+    return {"matched_names": matched_names, "unmatched": unmatched, "cells_imported": len(rows_to_upsert)}
+
+
+def jed89_schedule_sync_loop():
+    """เรียก jed89_fetch_and_apply_schedule ของเดือนนี้ + เดือนหน้าเป็นระยะ (ทุก JED89_SYNC_INTERVAL
+    วินาที) แทนที่ต้องรอให้แอดมินส่งออก CSV มาวางเองทุกครั้งที่มีแก้ไข — ปิดอัตโนมัติถ้าไม่ได้ตั้งคีย์ไว้"""
+    if not JED89_SCHEDULE_API_KEY:
+        return
+    while True:
+        try:
+            now = datetime.now(BANGKOK_TZ)
+            with db(commit=True) as cur:
+                this_month = jed89_fetch_and_apply_schedule(cur, now.year, now.month)
+            ny, nm = (now.year + 1, 1) if now.month == 12 else (now.year, now.month + 1)
+            with db(commit=True) as cur:
+                next_month = jed89_fetch_and_apply_schedule(cur, ny, nm)
+            invalidate_calendar_cache()
+            print(f"[jed89-sync] {now.year}-{now.month:02d}: {this_month} | {ny}-{nm:02d}: {next_month}")
+        except Exception as e:
+            print(f"[jed89-sync] error: {e}")
+        time.sleep(JED89_SYNC_INTERVAL)
 
 
 def ensure_shift_placeholder(username):
@@ -1924,6 +2045,11 @@ if __name__ == "__main__":
     # background thread สร้าง snapshot สำหรับ SSE (query database ตัวเดียว)
     snapshot_thread = threading.Thread(target=snapshot_updater, daemon=True)
     snapshot_thread.start()
+
+    if JED89_SCHEDULE_API_KEY:
+        jed89_sync_thread = threading.Thread(target=jed89_schedule_sync_loop, daemon=True)
+        jed89_sync_thread.start()
+        print(f"ดึงตารางกะจาก ops.jed89.com อัตโนมัติทุก {JED89_SYNC_INTERVAL:.0f} วินาที")
 
     if WATCHDOG_RESTART_HOURS > 0:
         watchdog_thread = threading.Thread(target=restart_watchdog, daemon=True)
