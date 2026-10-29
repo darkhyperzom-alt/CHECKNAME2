@@ -237,9 +237,14 @@ def _admin_code_ok():
 
 # ===== ส่วนฐานข้อมูล (PostgreSQL) =====
 
-# เงื่อนไข SQL กรองชื่อที่ลงท้ายด้วย suffix ที่ไม่ใช่พนักงานของเรา (ใช้ซ้ำหลายจุด)
-EXCLUDE_SQL = " AND " + " AND ".join("username NOT LIKE %s" for _ in EXCLUDED_SUFFIXES)
-EXCLUDE_PARAMS = tuple(f"%{suf}" for suf in EXCLUDED_SUFFIXES)
+# เงื่อนไข SQL กรองชื่อที่มี suffix พวกนี้ต่อจาก "-" ที่ไม่ใช่พนักงานของเรา (ใช้ซ้ำหลายจุด)
+# เดิมใช้ "username NOT LIKE '%suffix'" (ต้องลงท้ายด้วย suffix เป๊ะๆ) แต่ชื่อ Telegram จริงมักมีห้อยท้าย
+# เพิ่ม เช่น ตารางเวลา "(08:00-20:00)" หรืออีโมจิ ทำให้ไม่ "ลงท้าย" ด้วย suffix แล้วหลุดผ่านตัวกรองไป —
+# เปลี่ยนเป็น regex เช็คว่ามี "-suffix" ตามด้วยจบสตริงหรืออักขระที่ไม่ใช่ A-Z/0-9 (กัน MK8 ไปแมตช์ MK88 ผิด)
+EXCLUDED_SUFFIX_PATTERN = r"-(?:" + "|".join(EXCLUDED_SUFFIXES) + r")($|[^A-Za-z0-9])"
+EXCLUDED_SUFFIX_RE = re.compile(EXCLUDED_SUFFIX_PATTERN)
+EXCLUDE_SQL = " AND username !~ %s"
+EXCLUDE_PARAMS = (EXCLUDED_SUFFIX_PATTERN,)
 
 _pool = None
 _pool_lock = threading.Lock()
@@ -754,8 +759,8 @@ def parse_message(text):
     username = user_match.group(1).strip()
     user_id = userid_match.group(1).strip()
 
-    if any(username.endswith(suf) for suf in EXCLUDED_SUFFIXES):
-        return None  # ลงท้ายด้วย suffix ที่ไม่ใช่พนักงานของเรา ข้ามไปเลย
+    if EXCLUDED_SUFFIX_RE.search(username):
+        return None  # มี suffix ที่ไม่ใช่พนักงานของเรา ข้ามไปเลย
 
     lines = cleaned.split("\n")
 
@@ -930,7 +935,7 @@ async def process_event(event):
             try:
                 sender = await event.get_sender()
                 display_name = (getattr(sender, "first_name", "") or "").strip()
-                if display_name and not any(display_name.endswith(suf) for suf in EXCLUDED_SUFFIXES):
+                if display_name and not EXCLUDED_SUFFIX_RE.search(display_name):
                     await asyncio.to_thread(ensure_known_user, display_name, sender_id, when)
             except Exception as e:
                 print(f"[{stamp}] หาชื่อ Telegram ของ user_id {sender_id} ไม่สำเร็จ: {type(e).__name__}: {e}")
@@ -2093,7 +2098,7 @@ if __name__ == "__main__":
                             skipped_bot += 1
                             continue
                         display_name = (getattr(sender, "first_name", "") or "").strip()
-                        if not display_name or any(display_name.endswith(suf) for suf in EXCLUDED_SUFFIXES):
+                        if not display_name or EXCLUDED_SUFFIX_RE.search(display_name):
                             skipped_excluded += 1
                             print(f"[backfill-names] skip uid={sid} name={display_name!r}")
                             continue
