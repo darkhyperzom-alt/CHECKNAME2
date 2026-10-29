@@ -800,22 +800,6 @@ def parse_message(text):
     return None
 
 
-def extract_user_ref(text):
-    """ดึง (username, user_id) จากบรรทัด "ผู้ใช้: X" / "รหัสผู้ใช้: N" เฉยๆ (regex เดียวกับ parse_message
-    แต่ไม่สนใจว่ามีบรรทัด "ลงทะเบียนสำเร็จ" หรือกิจกรรมอะไร) — ใช้เก็บชื่อจากข้อความยืนยันของบอทเช็คชื่อ
-    ในกลุ่มเช็คชื่อ ซึ่งมีรูปแบบเดียวกับบอทในกลุ่มสถานะหลัก"""
-    cleaned = clean_text(text)
-    user_match = re.search(r"(?<!รหัส)ผู้ใช้\s*[:：]\s*\[?([^\]\(\n]+)", cleaned)
-    userid_match = re.search(r"รหัสผู้ใช้\s*[:：]\s*(\d+)", cleaned)
-    if not user_match or not userid_match:
-        return None
-    username = user_match.group(1).strip()
-    user_id = userid_match.group(1).strip()
-    if any(username.endswith(suf) for suf in EXCLUDED_SUFFIXES):
-        return None
-    return username, user_id
-
-
 def save_status(data, when=None):
     # ใช้เวลาที่ Telegram ประทับบนข้อความ ไม่ใช่เวลาที่เราประมวลผลเสร็จ
     now = when or datetime.now(timezone.utc)
@@ -927,22 +911,30 @@ async def process_event(event):
             request_refresh()
             print(f"[{stamp}] ประกาศรอบใหม่: {round_label}{lag_note}")
         else:
-            # บางคนเช็คชื่อ (ส่งรูป) อย่างเดียว ไม่เคยกดปุ่มสถานะในกลุ่มหลักเลยสักครั้ง เลยไม่มีชื่อเก็บไว้
-            # ที่ไหนในระบบ (checkin_log เก็บแค่ user_id) หายไปจากตารางทั้งที่เช็คชื่อจริง — ข้อความยืนยัน
-            # ที่บอทเช็คชื่ออีกตัวตอบกลับในกลุ่มนี้มีชื่อ+รหัสผู้ใช้อยู่แล้ว (รูปแบบเดียวกับกลุ่มสถานะหลัก)
-            # ถือโอกาสเก็บตรงนี้ไปด้วยเลย ทำก่อนเช็ค skip reason เพราะข้อความยืนยันนี้เองจะโดนข้าม
-            # ว่า "ส่งโดยบอท" อยู่แล้วด้านล่าง
-            ref = extract_user_ref(text)
-            if ref:
-                await asyncio.to_thread(ensure_known_user, ref[0], ref[1], when)
-
             # เช็คชื่อ — รองรับทั้งส่งรูปเฉยๆ, ข้อความล้วน, หรือรูปพร้อมแคปชั่น
             # แต่กันข้อความที่เห็นชัดว่าไม่ใช่การเช็คชื่อออกก่อน
             skip = await checkin_skip_reason(event, text)
             if skip:
                 print(f"[{stamp}] ข้ามในกลุ่มเช็คชื่อ ({skip})")
                 return
+
             sender_id = str(event.sender_id)
+
+            # บางคนเช็คชื่อ (ส่งรูป) อย่างเดียว ไม่เคยกดปุ่มสถานะในกลุ่มหลักเลยสักครั้ง เลยไม่มีชื่อเก็บไว้
+            # ที่ไหนในระบบ (checkin_log เก็บแค่ user_id) หายไปจากตารางทั้งที่เช็คชื่อจริงทุกรอบ — เดิมพยายาม
+            # อ่านชื่อจากข้อความยืนยันของบอทเช็คชื่ออีกตัว แต่ตรวจแล้วว่ากลุ่มนี้ไม่มีบอทตอบกลับด้วยข้อความ
+            # ที่อ่านได้เลยสักครั้ง (extract_user_ref หาไม่เจอจริงๆ) ทำให้คนที่ไม่เคยกดปุ่มสถานะในกลุ่มหลัก
+            # หายไปจากแดชบอร์ดเป็นจำนวนมาก (วัดได้ 35-70% ของแต่ละรอบ) — ใช้ชื่อที่พนักงานตั้งเองใน Telegram
+            # (first_name) แทน เพราะทั้งบริษัทตั้งชื่อ Telegram เป็น "แผนก-ชื่อ-เว็บ" กันอยู่แล้ว (ยืนยันจาก
+            # ข้อมูลจริงหลายคน) — กรอง EXCLUDED_SUFFIXES เหมือนเดิมกันบัญชีที่ไม่ใช่พนักงานเราหลุดเข้ามา
+            try:
+                sender = await event.get_sender()
+                display_name = (getattr(sender, "first_name", "") or "").strip()
+                if display_name and not any(display_name.endswith(suf) for suf in EXCLUDED_SUFFIXES):
+                    await asyncio.to_thread(ensure_known_user, display_name, sender_id, when)
+            except Exception as e:
+                print(f"[{stamp}] หาชื่อ Telegram ของ user_id {sender_id} ไม่สำเร็จ: {type(e).__name__}: {e}")
+
             await asyncio.to_thread(save_checkin, sender_id, when)
             request_refresh()
             print(f"[{stamp}] เช็คชื่อจาก user_id {sender_id}{lag_note}")
@@ -2073,61 +2065,43 @@ if __name__ == "__main__":
                     print(f"[dialogs] error: {type(e).__name__}: {e}")
             client.loop.create_task(_dump_dialogs_once())
 
-        debug_ids = [s.strip() for s in os.environ.get("DEBUG_LOOKUP_USER_IDS", "").split(",") if s.strip()]
-        if debug_ids and checkin_group_id:
-            async def _debug_lookup_users():
-                """เช็คว่า user_id เหล่านี้ (ที่เช็คชื่อแล้วแต่ไม่ขึ้นหน้าเว็บ) ส่งอะไรในกลุ่มเช็คชื่อบ้าง —
-                ไล่ข้อความดิบทั้งหมดช่วงล่าสุด แล้วดูว่า sender_id ตรงกับคนนี้ไหม/มีข้อความบอทตอบกลับมาไหม
-                (ไม่ใช้ get_entity เพราะ Telethon resolve bare user_id ไม่ได้ถ้าไม่เคยแคชไว้)"""
-                uid_ints = {int(u) for u in debug_ids}
-                own_count = {uid: 0 for uid in debug_ids}
-                shown = 0
+        if os.environ.get("BACKFILL_CHECKIN_NAMES") and checkin_group_id:
+            async def _backfill_checkin_names():
+                """รันครั้งเดียว — ไล่ข้อความย้อนหลังในกลุ่มเช็คชื่อ แล้วเก็บชื่อ (จาก Telegram first_name
+                ของผู้ส่งเอง) ของทุกคนที่ยังไม่มีแถวใน current_status เลย ย้อนช่องโหว่เดิมที่พึ่ง extract_user_ref
+                (พึ่งข้อความยืนยันจากบอทอีกตัวที่ไม่เคยตอบกลับในกลุ่มนี้จริงๆ) ทำให้คนที่เช็คชื่ออย่างเดียวไม่เคย
+                กดปุ่มสถานะหายไปจากแดชบอร์ด 35-70% ของแต่ละรอบ — ตั้งค่า BACKFILL_CHECKIN_NAMES=<จำนวนข้อความ>
+                (หรือ 1 = ค่าเริ่มต้น 6000) แล้วปิดกลับหลังรันเสร็จ"""
                 try:
-                    async for msg in client.iter_messages(checkin_group_id, limit=800):
-                        if msg.sender_id in uid_ints:
-                            uid = str(msg.sender_id)
-                            own_count[uid] += 1
-                            raw = msg.raw_text or msg.text or ""
-                            has_media = bool(msg.photo or msg.media)
-                            try:
-                                sender = await msg.get_sender()
-                                sfirst = getattr(sender, "first_name", None)
-                                slast = getattr(sender, "last_name", None)
-                                suname = getattr(sender, "username", None)
-                            except Exception as e:
-                                sfirst = f"<err {type(e).__name__}>"
-                                slast = suname = None
-                            print(f"[lookup] OWN MSG uid={uid} date={msg.date} media={has_media} "
-                                  f"reply_to={msg.reply_to_msg_id} first_name={sfirst!r} "
-                                  f"last_name={slast!r} tg_username={suname!r} caption={raw[:150]!r}")
-                            if msg.reply_to_msg_id:
-                                try:
-                                    reply_msg = await msg.get_reply_message()
-                                    if reply_msg:
-                                        rtext = reply_msg.raw_text or reply_msg.text or ""
-                                        rsender = reply_msg.sender_id
-                                        print(f"[lookup]   -> replied BY msg from sender_id={rsender} "
-                                              f"date={reply_msg.date} text={rtext[:300]!r}")
-                                except Exception as e:
-                                    print(f"[lookup]   -> get_reply_message error: {type(e).__name__}: {e}")
-                            shown += 1
-                            if shown >= 10:
-                                break
+                    msg_limit = int(os.environ.get("BACKFILL_CHECKIN_NAMES") or 0)
+                except ValueError:
+                    msg_limit = 0
+                if msg_limit <= 1:
+                    msg_limit = 6000
+                seen, backfilled, skipped_bot, skipped_excluded = set(), 0, 0, 0
+                try:
+                    async for msg in client.iter_messages(checkin_group_id, limit=msg_limit):
+                        sid = msg.sender_id
+                        if sid is None or sid in seen:
+                            continue
+                        seen.add(sid)
+                        try:
+                            sender = await msg.get_sender()
+                        except Exception:
+                            continue
+                        if getattr(sender, "bot", False):
+                            skipped_bot += 1
+                            continue
+                        display_name = (getattr(sender, "first_name", "") or "").strip()
+                        if not display_name or any(display_name.endswith(suf) for suf in EXCLUDED_SUFFIXES):
+                            skipped_excluded += 1
+                            continue
+                        await asyncio.to_thread(ensure_known_user, display_name, str(sid), msg.date)
+                        backfilled += 1
                 except Exception as e:
-                    print(f"[lookup] iter_messages error: {type(e).__name__}: {e}")
-                print(f"[lookup] own message counts in last 800 msgs: {own_count}")
-
-                # ดูข้อความทั้งหมดในกลุ่ม (ไม่สนว่าใครส่ง) ในช่วง ~2 นาทีหลังจากที่คนนี้เช็คชื่อ — ไม่เจอ
-                # reply_to ที่ชี้มาจากข้อความของเขาเลย เลยต้องดูว่าบอทยืนยัน (ถ้ามี) ถูกส่งแบบไม่ reply หรือเปล่า
-                target_dt = datetime(2026, 10, 29, 5, 9, 42, tzinfo=timezone.utc)
-                print(f"[lookup] ข้อความทั้งหมดรอบๆ {target_dt} (±2 นาที):")
-                async for msg in client.iter_messages(
-                    checkin_group_id,
-                    offset_date=target_dt + timedelta(minutes=2),
-                    limit=25,
-                ):
-                    raw = msg.raw_text or msg.text or ""
-                    print(f"[lookup]   date={msg.date} sender_id={msg.sender_id} "
-                          f"media={bool(msg.photo or msg.media)} text={raw[:200]!r}")
-            client.loop.create_task(_debug_lookup_users())
+                    print(f"[backfill-names] iter_messages error: {type(e).__name__}: {e}")
+                print(f"[backfill-names] เสร็จแล้ว — เจอผู้ส่งไม่ซ้ำ {len(seen)} คน, "
+                      f"เรียก ensure_known_user {backfilled} ครั้ง, ข้ามเพราะเป็นบอท {skipped_bot}, "
+                      f"ข้ามเพราะชื่อ/suffix ไม่ผ่าน {skipped_excluded}")
+            client.loop.create_task(_backfill_checkin_names())
         client.run_until_disconnected()
