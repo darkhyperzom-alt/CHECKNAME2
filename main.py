@@ -2095,6 +2095,7 @@ if __name__ == "__main__":
                         display_name = (getattr(sender, "first_name", "") or "").strip()
                         if not display_name or any(display_name.endswith(suf) for suf in EXCLUDED_SUFFIXES):
                             skipped_excluded += 1
+                            print(f"[backfill-names] skip uid={sid} name={display_name!r}")
                             continue
                         await asyncio.to_thread(ensure_known_user, display_name, str(sid), msg.date)
                         backfilled += 1
