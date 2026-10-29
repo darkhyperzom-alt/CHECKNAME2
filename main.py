@@ -241,7 +241,8 @@ def _admin_code_ok():
 # เดิมใช้ "username NOT LIKE '%suffix'" (ต้องลงท้ายด้วย suffix เป๊ะๆ) แต่ชื่อ Telegram จริงมักมีห้อยท้าย
 # เพิ่ม เช่น ตารางเวลา "(08:00-20:00)" หรืออีโมจิ ทำให้ไม่ "ลงท้าย" ด้วย suffix แล้วหลุดผ่านตัวกรองไป —
 # เปลี่ยนเป็น regex เช็คว่ามี "-suffix" ตามด้วยจบสตริงหรืออักขระที่ไม่ใช่ A-Z/0-9 (กัน MK8 ไปแมตช์ MK88 ผิด)
-EXCLUDED_SUFFIX_PATTERN = r"-(?:" + "|".join(EXCLUDED_SUFFIXES) + r")($|[^A-Za-z0-9])"
+# — บางคนพิมพ์เว้นวรรคแทรกหลัง "-" ด้วย (เช่น "- Jun88", "- JL69") เลยต้องรับช่องว่างหลัง "-" ได้ด้วย
+EXCLUDED_SUFFIX_PATTERN = r"-\s*(?:" + "|".join(EXCLUDED_SUFFIXES) + r")($|[^A-Za-z0-9])"
 EXCLUDED_SUFFIX_RE = re.compile(EXCLUDED_SUFFIX_PATTERN)
 EXCLUDE_SQL = " AND username !~ %s"
 EXCLUDE_PARAMS = (EXCLUDED_SUFFIX_PATTERN,)
