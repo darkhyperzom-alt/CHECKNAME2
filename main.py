@@ -2072,4 +2072,33 @@ if __name__ == "__main__":
                 except Exception as e:
                     print(f"[dialogs] error: {type(e).__name__}: {e}")
             client.loop.create_task(_dump_dialogs_once())
+
+        debug_ids = [s.strip() for s in os.environ.get("DEBUG_LOOKUP_USER_IDS", "").split(",") if s.strip()]
+        if debug_ids and checkin_group_id:
+            async def _debug_lookup_users():
+                """เช็คว่า user_id เหล่านี้ (ที่เช็คชื่อแล้วแต่ไม่ขึ้นหน้าเว็บ) มีข้อความยืนยันจากบอทเช็คชื่อ
+                ในรูปแบบที่ extract_user_ref อ่านได้ไหม — ดึงจาก get_entity + ไล่ข้อความล่าสุดในกลุ่มเช็คชื่อ"""
+                for uid in debug_ids:
+                    try:
+                        ent = await client.get_entity(int(uid))
+                        uname = getattr(ent, "username", None)
+                        fname = getattr(ent, "first_name", None)
+                        print(f"[lookup] {uid} -> telegram username={uname!r} first_name={fname!r}")
+                    except Exception as e:
+                        print(f"[lookup] {uid} get_entity error: {type(e).__name__}: {e}")
+
+                found = {uid: 0 for uid in debug_ids}
+                try:
+                    async for msg in client.iter_messages(checkin_group_id, limit=1500):
+                        raw = msg.raw_text or msg.text or ""
+                        for uid in debug_ids:
+                            if uid in raw:
+                                found[uid] += 1
+                                if found[uid] <= 3:
+                                    sender = "bot" if (msg.sender and getattr(msg.sender, "bot", False)) else "user"
+                                    print(f"[lookup] {uid} msg(sender={sender}, date={msg.date}): {raw[:300]!r}")
+                except Exception as e:
+                    print(f"[lookup] iter_messages error: {type(e).__name__}: {e}")
+                print(f"[lookup] match counts in last 1500 msgs: {found}")
+            client.loop.create_task(_debug_lookup_users())
         client.run_until_disconnected()
