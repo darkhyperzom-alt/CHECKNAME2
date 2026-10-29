@@ -2089,9 +2089,17 @@ if __name__ == "__main__":
                             own_count[uid] += 1
                             raw = msg.raw_text or msg.text or ""
                             has_media = bool(msg.photo or msg.media)
-                            is_reply = msg.reply_to_msg_id is not None
+                            try:
+                                sender = await msg.get_sender()
+                                sfirst = getattr(sender, "first_name", None)
+                                slast = getattr(sender, "last_name", None)
+                                suname = getattr(sender, "username", None)
+                            except Exception as e:
+                                sfirst = f"<err {type(e).__name__}>"
+                                slast = suname = None
                             print(f"[lookup] OWN MSG uid={uid} date={msg.date} media={has_media} "
-                                  f"reply_to={msg.reply_to_msg_id} text={raw[:200]!r}")
+                                  f"reply_to={msg.reply_to_msg_id} first_name={sfirst!r} "
+                                  f"last_name={slast!r} tg_username={suname!r} caption={raw[:150]!r}")
                             if msg.reply_to_msg_id:
                                 try:
                                     reply_msg = await msg.get_reply_message()
