@@ -2108,5 +2108,18 @@ if __name__ == "__main__":
                 except Exception as e:
                     print(f"[lookup] iter_messages error: {type(e).__name__}: {e}")
                 print(f"[lookup] own message counts in last 800 msgs: {own_count}")
+
+                # ดูข้อความทั้งหมดในกลุ่ม (ไม่สนว่าใครส่ง) ในช่วง ~2 นาทีหลังจากที่คนนี้เช็คชื่อ — ไม่เจอ
+                # reply_to ที่ชี้มาจากข้อความของเขาเลย เลยต้องดูว่าบอทยืนยัน (ถ้ามี) ถูกส่งแบบไม่ reply หรือเปล่า
+                target_dt = datetime(2026, 10, 29, 5, 9, 42, tzinfo=timezone.utc)
+                print(f"[lookup] ข้อความทั้งหมดรอบๆ {target_dt} (±2 นาที):")
+                async for msg in client.iter_messages(
+                    checkin_group_id,
+                    offset_date=target_dt + timedelta(minutes=2),
+                    limit=25,
+                ):
+                    raw = msg.raw_text or msg.text or ""
+                    print(f"[lookup]   date={msg.date} sender_id={msg.sender_id} "
+                          f"media={bool(msg.photo or msg.media)} text={raw[:200]!r}")
             client.loop.create_task(_debug_lookup_users())
         client.run_until_disconnected()
