@@ -2076,29 +2076,37 @@ if __name__ == "__main__":
         debug_ids = [s.strip() for s in os.environ.get("DEBUG_LOOKUP_USER_IDS", "").split(",") if s.strip()]
         if debug_ids and checkin_group_id:
             async def _debug_lookup_users():
-                """เช็คว่า user_id เหล่านี้ (ที่เช็คชื่อแล้วแต่ไม่ขึ้นหน้าเว็บ) มีข้อความยืนยันจากบอทเช็คชื่อ
-                ในรูปแบบที่ extract_user_ref อ่านได้ไหม — ดึงจาก get_entity + ไล่ข้อความล่าสุดในกลุ่มเช็คชื่อ"""
-                for uid in debug_ids:
-                    try:
-                        ent = await client.get_entity(int(uid))
-                        uname = getattr(ent, "username", None)
-                        fname = getattr(ent, "first_name", None)
-                        print(f"[lookup] {uid} -> telegram username={uname!r} first_name={fname!r}")
-                    except Exception as e:
-                        print(f"[lookup] {uid} get_entity error: {type(e).__name__}: {e}")
-
-                found = {uid: 0 for uid in debug_ids}
+                """เช็คว่า user_id เหล่านี้ (ที่เช็คชื่อแล้วแต่ไม่ขึ้นหน้าเว็บ) ส่งอะไรในกลุ่มเช็คชื่อบ้าง —
+                ไล่ข้อความดิบทั้งหมดช่วงล่าสุด แล้วดูว่า sender_id ตรงกับคนนี้ไหม/มีข้อความบอทตอบกลับมาไหม
+                (ไม่ใช้ get_entity เพราะ Telethon resolve bare user_id ไม่ได้ถ้าไม่เคยแคชไว้)"""
+                uid_ints = {int(u) for u in debug_ids}
+                own_count = {uid: 0 for uid in debug_ids}
+                shown = 0
                 try:
-                    async for msg in client.iter_messages(checkin_group_id, limit=1500):
-                        raw = msg.raw_text or msg.text or ""
-                        for uid in debug_ids:
-                            if uid in raw:
-                                found[uid] += 1
-                                if found[uid] <= 3:
-                                    sender = "bot" if (msg.sender and getattr(msg.sender, "bot", False)) else "user"
-                                    print(f"[lookup] {uid} msg(sender={sender}, date={msg.date}): {raw[:300]!r}")
+                    async for msg in client.iter_messages(checkin_group_id, limit=800):
+                        if msg.sender_id in uid_ints:
+                            uid = str(msg.sender_id)
+                            own_count[uid] += 1
+                            raw = msg.raw_text or msg.text or ""
+                            has_media = bool(msg.photo or msg.media)
+                            is_reply = msg.reply_to_msg_id is not None
+                            print(f"[lookup] OWN MSG uid={uid} date={msg.date} media={has_media} "
+                                  f"reply_to={msg.reply_to_msg_id} text={raw[:200]!r}")
+                            if msg.reply_to_msg_id:
+                                try:
+                                    reply_msg = await msg.get_reply_message()
+                                    if reply_msg:
+                                        rtext = reply_msg.raw_text or reply_msg.text or ""
+                                        rsender = reply_msg.sender_id
+                                        print(f"[lookup]   -> replied BY msg from sender_id={rsender} "
+                                              f"date={reply_msg.date} text={rtext[:300]!r}")
+                                except Exception as e:
+                                    print(f"[lookup]   -> get_reply_message error: {type(e).__name__}: {e}")
+                            shown += 1
+                            if shown >= 10:
+                                break
                 except Exception as e:
                     print(f"[lookup] iter_messages error: {type(e).__name__}: {e}")
-                print(f"[lookup] match counts in last 1500 msgs: {found}")
+                print(f"[lookup] own message counts in last 800 msgs: {own_count}")
             client.loop.create_task(_debug_lookup_users())
         client.run_until_disconnected()
